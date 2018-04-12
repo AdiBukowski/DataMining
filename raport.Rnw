@@ -21,6 +21,8 @@ library(ElemStatLearn)
 library(MASS)
 library(cluster)
 library(ggplot2)
+library(ROCR)
+library(stats)
 
 opts_chunk$set(fig.path='figure/', fig.align='center', fig.pos='H',fig.width=5, fig.height=4,message=FALSE)
 # UWAGA: w razie potrzeby mo¿na zmieniaæ te ustawienia w danym chunk'u!
@@ -118,13 +120,39 @@ X.spam<-X[y=='spam',1:48]
 X.email<-X[y=='email',1:48]
 avg.X.spam <- sort(sapply(X.spam,mean),decreasing = TRUE)
 avg.X.email <- sort(sapply(X.email, mean),decreasing = TRUE)
-data <- cbind(avg.X.spam,avg.X.email)
-data <- as.data.frame(data)
-data<-data[1:10,]
-ggplot(data, aes(x=reorder(rownames(data),-avg.X.spam),y=avg.X.spam))+geom_bar(stat = "identity")+ theme(axis.text.x = element_text(angle = 45, hjust = 1))
-ggplot(data, aes(x=reorder(rownames(data),-avg.X.email),y=avg.X.email))+geom_bar(stat = "identity")+ theme(axis.text.x = element_text(angle = 45, hjust = 1))
+avg.X.spam<-as.data.frame(avg.X.spam[1:10])
+colnames(avg.X.spam)<-'avg_word_freq'
+avg.X.email<-as.data.frame(avg.X.email[1:10])
+colnames(avg.X.email)<-'avg_word_freq'
+ggplot(avg.X.spam, aes(x=reorder(rownames(avg.X.spam),-avg_word_freq),y=avg_word_freq))+geom_bar(stat = "identity")+ theme(axis.text.x = element_text(angle = 45, hjust = 1))
+ggplot(avg.X.spam, aes(x=reorder(rownames(avg.X.email),-avg_word_freq),y=avg_word_freq))+geom_bar(stat = "identity")+ theme(axis.text.x = element_text(angle = 45, hjust = 1))
 @
 
+<<>>=
+X.spam<-X[y=='spam', 49:54]
+X.email<-X[y=='email', 49:54]
+X.spam <- sort(sapply(X.spam, mean),decreasing = TRUE)
+X.email <- sort(sapply(X.email, mean),decreasing = TRUE)
+X.spam <- cbind(X.spam,'spam')
+X.email <- cbind(X.email,'email')
+colnames(X.spam) <- c('avg.char.freq','type')
+colnames(X.email) <- c('avg.char.freq','type')
+X.char.freq <- rbind(X.spam,X.email)
+X.char.freq <- cbind(rownames(X.char.freq),X.char.freq)
+colnames(X.char.freq) <- c('char', 'avg.char.freq', 'type')
+X.char.freq <- as.data.frame(X.char.freq) 
+ggplot(X.char.freq, aes(x=as.factor(char), y = avg.char.freq, fill=type))+geom_bar(stat = "identity",position = "dodge")+ theme(axis.text.x = element_text(angle = 45, hjust = 1))
+@
+
+<<>>=
+par(mfrow=c(1,3))
+col.55<-as.data.frame(as.matrix(by(X[,55],y,mean)))
+col.56<-as.data.frame(as.matrix(by(X[,56],y,mean)))
+col.57<-as.data.frame(as.matrix(by(X[,57],y,mean)))
+ggplot(col.55, aes(x=rownames(col.55),y=V1,fill=rownames(col.55)))+geom_bar(stat='identity') + theme(legend.position="none")
+ggplot(col.56, aes(x=rownames(col.56),y=V1,fill=rownames(col.56)))+geom_bar(stat='identity') + theme(legend.position="none")
+ggplot(col.57, aes(x=rownames(col.57),y=V1,fill=rownames(col.57)))+geom_bar(stat='identity') + theme(legend.position="none")
+@
 
 \section{Klasyfikacja}
 
@@ -145,7 +173,15 @@ sum(diag(tab2))/sum(tab2)
 @
 Krzywe ROC
 <<>>=
+pred.ROCR.spam <- prediction(lr.spam$fitted.values, y)
+perf.ROCR.logit <- performance(pred.ROCR.spam, "tpr", "fpr")
+plot(perf.ROCR.logit, print.cutoffs.at=seq(0.1,1,0.1), colorize=TRUE, lwd=2)
+pred.ROCR.spam.sig <- prediction(lr.spam.sig$fitted.values, y)
+perf.ROCR.logit <- performance(pred.ROCR.spam.sig, "tpr", "fpr")
+plot(perf.ROCR.logit, print.cutoffs.at=seq(0.1,1,0.1), colorize=TRUE, lwd=2)
 
+AUC.spam <- performance(pred.ROCR.spam, "auc")@y.values[1]
+AUC.spam.sig <- performance(pred.ROCR.spam.sig, "auc")@y.values[1]
 @
 
 \subsection{Klasyfikator naiwny Bayesa}
@@ -159,5 +195,22 @@ Krzywe ROC
 \subsection{Sieci neuronowe}
 
 \section{Analiza skupieñ}
+\subsection{K-means}
+<<>>=
+k <- 2
+kmeans.k3 <- kmeans(X,centers=k,iter.max=10)
+X.kmeans.clusters <- kmeans.k3$cluster
+table(X.kmeans,y)
+X.pca <- prcomp(X,retx=T)
+X.pca.data <- X.pca$x[,1:2] 
+X.pca.data.scaled<-scale(X.pca.data)
+plot(X.pca.data.scaled[,1],X.pca.data.scaled[,2], col=as.factor(y), pch= as.numeric(X.kmeans.clusters))
+
+k <- 3
+kmeans.k3 <- kmeans(X,centers=k,iter.max=10)
+X.kmeans <- kmeans.k3$cluster
+table(X.kmeans,y)
+
+@
 
 \end{document}
