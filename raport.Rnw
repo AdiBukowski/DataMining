@@ -1,0 +1,163 @@
+\documentclass[12pt, a4paper]{article}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  % dodatkowe pakiety LaTeX'a
+\usepackage[OT4]{polski}
+\usepackage[cp1250]{inputenc}
+\usepackage[top=2.5cm, bottom=2.5cm, left=2cm, right=2cm]{geometry}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage[colorlinks=true, linkcolor=blue]{hyperref}
+\usepackage{animate}
+\newtheorem{theorem}{Twierdzenie}
+\usepackage{mathtools}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% ustawienia globalne
+<<ustawienia_globalne, echo=FALSE, warning=FALSE,results='hide',message=FALSE>>=
+library(knitr)
+library(xtable) #pakiet do tworzenia tabel w formacie LaTeX'a
+library(animation)
+library(ElemStatLearn)
+library(MASS)
+library(cluster)
+library(ggplot2)
+
+opts_chunk$set(fig.path='figure/', fig.align='center', fig.pos='H',fig.width=5, fig.height=4,message=FALSE)
+# UWAGA: w razie potrzeby mo¿na zmieniaæ te ustawienia w danym chunk'u!
+@
+  
+  
+  
+\begin{document}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% strona tytulowa
+\title{Filtrowanie spamu}
+\author{Adrian Bukowski  Anna Miko³ajczyk}
+\maketitle
+\tableofcontents 
+
+\newpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Wstêp oraz analiza opisowa}
+Naszym zadaniem jest rozpoznanie czy dany mail jest spamem czy nie. Mamy do czynienia z 57 zmiennymi spoœród których:
+\begin{itemize}
+\item 48 przyjmuje wartoœci od 0 do 100 i oznacza procentowy udzia³ danego s³owa w mailu (za s³owo uznajemy dowolny ci¹g liter i cyfr)
+\item 6 przyjmuje wartoœci od 0 do 100 i oznacza procentowy udzia³ danego znaku w mailu 
+\item 1 przyjmuje wartoœci dodatnie i oznacza œredni¹ d³ugoœæ nieprzerywanych ci¹gów wielkich liter
+\item 1 przyjmuje wartoœci naturalne i oznacza d³ugoœæ najd³u¿szego nieprzerwanego ci¹gu wielkich liter
+\item 1 przyjmuje wartoœci naturalne i oznacza ³¹czna iloœæ wielkich liter w mailu
+\end{itemize}
+Oprócz tego dane zawieraj¹ kolumnê spam/mail oznaczaj¹c¹ czy dany mail jest spamem. Mamy wiêc do czynienia z zadaniem klasyfikacji. Zbiór zawiera 4601 elementów. Przyjrzyjmy siê danym:
+<<>>=
+data("spam")
+dim(spam)
+X<-spam[,1:(dim(spam)[2]-1)]
+y<-spam[,dim(spam)[2]]
+@
+SprawdŸmy czy dane s¹ dobrze wczytane:
+<<>>=
+sapply(X,class)
+@
+Jak widaæ zmienne s¹ zgodne z opisem. Zobaczmy czy nie wystêpuj¹ brakuj¹ce dane:
+<<>>=
+sum(is.na(X))
+@
+Nie mamy do czynienia z danymi brakuj¹cymy.
+
+Podstawowe statystyki dla zmiennych objaœniaj¹cych:
+<<>>=
+summary(X)
+@
+Zobaczmy tak¿e jak wygl¹da kowiariancja zmiennych:
+<<>>=
+kowariancja <- cov(X)
+heatmap(kowariancja)
+@
+
+Przyjrzyjmy siê tak¿e zmiennej objaœnianej:
+<<>>=
+class(y)
+levels(y)
+@
+Jak widaæ jest to zmienna typu "factor" o dwóch poziomach - "email" i "spam".
+
+Zobaczmy jak dziel¹ siê nasze dane ze wzglêdu na zmienn¹ obj¹snian¹:
+<<>>=
+tab<-table(y)
+tab
+as.matrix(tab)
+data<-as.data.frame(tab)
+colnames(data)<-c('type','freq')
+ggplot(data, aes(x=as.factor(type), y=freq,fill=as.factor(type)))+geom_bar(stat = "identity")+ labs(x="", y='Ilosc') + theme(legend.position="none")
+prop.table(tab)
+@
+Jak widaæ oko³o 60\% to emaile, a 40\% to spam.
+
+W celu bardziej œwiadomej analizy dodajmy nazwy kolumn:
+<<>>=
+spamColNames <- c("word_freq_make", "word_freq_address", "word_freq_all", "word_freq_3d", 
+    "word_freq_our", "word_freq_over", "word_freq_remove", "word_freq_internet", 
+    "word_freq_order", "word_freq_mail", "word_freq_receive", "word_freq_will", 
+    "word_freq_people", "word_freq_report", "word_freq_addresses", "word_freq_free", 
+    "word_freq_business", "word_freq_email", "word_freq_you", "word_freq_credit", 
+    "word_freq_your", "word_freq_font", "word_freq_000", "word_freq_money", 
+    "word_freq_hp", "word_freq_hpl", "word_freq_george", "word_freq_650", "word_freq_lab", 
+    "word_freq_labs", "word_freq_telnet", "word_freq_857", "word_freq_data", 
+    "word_freq_415", "word_freq_85", "word_freq_technology", "word_freq_1999", 
+    "word_freq_parts", "word_freq_pm", "word_freq_direct", "word_freq_cs", "word_freq_meeting", 
+    "word_freq_original", "word_freq_project", "word_freq_re", "word_freq_edu", 
+    "word_freq_table", "word_freq_conference", "char_freq_ch;", "char_freq_ch(", 
+    "char_freq_ch[", "char_freq_ch!", "char_freq_ch$", "char_freq_ch#", "capital_run_length_average", 
+    "capital_run_length_longest", "capital_run_length_total")
+colnames(X)<-spamColNames
+@
+
+<<>>=
+X.spam<-X[y=='spam',1:48]
+X.email<-X[y=='email',1:48]
+avg.X.spam <- sort(sapply(X.spam,mean),decreasing = TRUE)
+avg.X.email <- sort(sapply(X.email, mean),decreasing = TRUE)
+data <- cbind(avg.X.spam,avg.X.email)
+data <- as.data.frame(data)
+data<-data[1:10,]
+ggplot(data, aes(x=reorder(rownames(data),-avg.X.spam),y=avg.X.spam))+geom_bar(stat = "identity")+ theme(axis.text.x = element_text(angle = 45, hjust = 1))
+ggplot(data, aes(x=reorder(rownames(data),-avg.X.email),y=avg.X.email))+geom_bar(stat = "identity")+ theme(axis.text.x = element_text(angle = 45, hjust = 1))
+@
+
+
+\section{Klasyfikacja}
+
+\subsection{Regresja Logistyczna}
+<<>>=
+#regresja logistyczna
+lr.spam <- glm(y~as.matrix(X),family = binomial(link='logit'))
+summ.lr.spam <- summary(lr.spam)
+tab1<-table(lr.spam$fitted.values>0.5,y)
+sum(diag(tab1))/sum(tab1)
+#regresja logistyczna ze wspó³czynnikami istotnymi statystycznie 
+significant <- summ.lr.spam$coefficients[2:dim(summ.lr.spam$coefficients)[1],4]<0.05
+X.sig <- X[,significant]
+lr.spam.sig <- glm(y~as.matrix(X.sig), family = binomial('logit'))
+summ.lr.spam.sig <- summary(lr.spam.sig)
+tab2<-table(lr.spam.sig$fitted.values>0.5,y)
+sum(diag(tab2))/sum(tab2)
+@
+Krzywe ROC
+<<>>=
+
+@
+
+\subsection{Klasyfikator naiwny Bayesa}
+\subsection{Lasy losowe}
+\subsection{Sieci neuronowe}
+
+\section{Klasyfikacja z redukcj¹ wymiaru}
+\subsection{Regresja Logistyczna}
+\subsection{Klasyfikator naiwny Bayesa}
+\subsection{Lasy losowe}
+\subsection{Sieci neuronowe}
+
+\section{Analiza skupieñ}
+
+\end{document}
