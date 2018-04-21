@@ -23,6 +23,9 @@ library(cluster)
 library(ggplot2)
 library(ROCR)
 library(stats)
+library(e1071)
+library(neuralnet)
+library(randomForest)
 
 opts_chunk$set(fig.path='figure/', fig.align='center', fig.pos='H',fig.width=5, fig.height=4,message=FALSE)
 # UWAGA: w razie potrzeby mo¿na zmieniaæ te ustawienia w danym chunk'u!
@@ -173,26 +176,73 @@ sum(diag(tab2))/sum(tab2)
 @
 Krzywe ROC
 <<>>=
-pred.ROCR.spam <- prediction(lr.spam$fitted.values, y)
-perf.ROCR.logit <- performance(pred.ROCR.spam, "tpr", "fpr")
-plot(perf.ROCR.logit, print.cutoffs.at=seq(0.1,1,0.1), colorize=TRUE, lwd=2)
-pred.ROCR.spam.sig <- prediction(lr.spam.sig$fitted.values, y)
-perf.ROCR.logit <- performance(pred.ROCR.spam.sig, "tpr", "fpr")
-plot(perf.ROCR.logit, print.cutoffs.at=seq(0.1,1,0.1), colorize=TRUE, lwd=2)
-
-AUC.spam <- performance(pred.ROCR.spam, "auc")@y.values[1]
-AUC.spam.sig <- performance(pred.ROCR.spam.sig, "auc")@y.values[1]
+ROC<-function(pred.prob,true.labels){
+  pred.ROCR <- ROCR::prediction(pred.prob, true.labels)
+  perf.ROCR <- performance(pred.ROCR.spam, "tpr", "fpr")
+  plot(perf.ROCR, print.cutoffs.at=seq(0.1,1,0.1), colorize=TRUE, lwd=2)
+  return(performance(pred.ROCR, "auc")@y.values[1])
+}
+ROC(lr.spam$fitted.values,y)
+ROC(lr.spam.sig$fitted.values,y)
 @
 
 \subsection{Klasyfikator naiwny Bayesa}
-\subsection{Lasy losowe}
+<<>>=
+smple<-sample(dim(spam)[1],0.2*dim(spam)[1])
+test.set<-spam[smple,]
+train.set<-spam[-smple,]
+
+model<-naiveBayes(spam~.,data=train.set)
+naiveBayes.prediction<-predict(model,test.set)
+
+@
+
+
 \subsection{Sieci neuronowe}
+
+
+
+<<>>=
+data<-spam
+data$spam<-ifelse(data$spam=='spam',1,0)
+maxs <- apply(data, 2, max) 
+mins <- apply(data, 2, min)
+scaled <- as.data.frame(scale(data, center = mins, scale = maxs - mins))
+index<-sample(dim(spam)[1],0.2*dim(spam)[1])
+train_ <- scaled[-index,]
+test_ <- scaled[index,]
+n<-names(spam)
+f<- as.formula(paste('spam~',paste(n[!n %in% 'spam'],collapse = ' + ')))
+nn <- neuralnet(f,data=train_,hidden=c(5,3),linear.output=T)
+@
+
+<<fig.cap='Sieæ neuronowa z dwoma warstwami ukrytymi.'>>=
+plot(nn)
+@
+
+
+<<>>=
+prediction.nn <- compute(nn,test_[,-dim(test_)[2]])
+pred.test<-ifelse(prediction.nn$net.result>0.5,'spam','email')
+tbl<-table(pred.test,test_$spam)
+sum(diag(tbl))/sum(tbl)
+ROC(prediction.nn$net.result,test_$spam)
+@
+
+\subsection{Lasy losowe}
+<<>>=
+model<-randomForest(spam~.,data=spam, subset = -index)
+rand.forest.prediction<-predict(model,test_,type = 'prob')
+ROC(rand.forest.prediction[,2],test_$spam)
+rand.forest.prediction.labels<-predict(model,test_,type = 'response')
+table(rand.forest.prediction.labels,test_$spam)
+@
+
 
 \section{Klasyfikacja z redukcj¹ wymiaru}
 \subsection{Regresja Logistyczna}
 \subsection{Klasyfikator naiwny Bayesa}
 \subsection{Lasy losowe}
-\subsection{Sieci neuronowe}
 
 \section{Analiza skupieñ}
 \subsection{K-means}
