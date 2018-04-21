@@ -26,6 +26,9 @@ library(stats)
 library(e1071)
 library(neuralnet)
 library(randomForest)
+library(mlr)
+library(kknn)
+
 
 opts_chunk$set(fig.path='figure/', fig.align='center', fig.pos='H',fig.width=5, fig.height=4,message=FALSE)
 # UWAGA: w razie potrzeby mo¿na zmieniaæ te ustawienia w danym chunk'u!
@@ -45,7 +48,7 @@ opts_chunk$set(fig.path='figure/', fig.align='center', fig.pos='H',fig.width=5, 
 \newpage
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Wstêp oraz analiza opisowa}
-Naszym zadaniem jest rozpoznanie czy dany mail jest spamem czy nie. Mamy do czynienia z 57 zmiennymi spoœród których:
+Naszym zadaniem jest rozpoznanie czy dany email jest spamem czy nie. Mamy do czynienia z 57 zmiennymi spoœród których:
 \begin{itemize}
 \item 48 przyjmuje wartoœci od 0 do 100 i oznacza procentowy udzia³ danego s³owa w mailu (za s³owo uznajemy dowolny ci¹g liter i cyfr)
 \item 6 przyjmuje wartoœci od 0 do 100 i oznacza procentowy udzia³ danego znaku w mailu 
@@ -159,6 +162,72 @@ ggplot(col.57, aes(x=rownames(col.57),y=V1,fill=rownames(col.57)))+geom_bar(stat
 
 \section{Klasyfikacja}
 
+<<>>=
+task <- makeClassifTask(data = spam, target = "spam")
+cv_folds <- makeResampleDesc("CV", iters = 5)
+@
+
+\subsection{Regresja Logistyczna}
+<<>>=
+logistic.learner <- makeLearner("classif.logreg",predict.type = "prob")
+cv.logistic <- crossval(learner = logistic.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,auc),show.info = F)
+cv.logistic$aggr
+ROC(cv.logistic$pred$data[,4],cv.logistic$pred$data[,2])
+@
+
+\subsection{LDA}
+<<>>=
+lda.learner <- makeLearner("classif.lda",predict.type = "prob")
+cv.lda <- crossval(learner = lda.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,auc),show.info = F)
+cv.lda$aggr
+ROC(cv.lda$pred$data[,4],cv.lda$pred$data[,2])
+@
+
+\subsection{Klasyfikator Naiwny Baysa}
+<<>>=
+bayes.learner <- makeLearner("classif.naiveBayes", predict.type = 'prob')
+cv.bayes <- crossval(learner = bayes.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,auc),show.info = F)
+cv.bayes$aggr
+ROC(cv.bayes$pred$data[,4],cv.bayes$pred$data[,2])
+@
+
+\subsection{Metoda k-Najbli¿szych S¹siadów}
+<<>>=
+knn.learner <- makeLearner("classif.kknn", predict.type = 'prob')
+cv.knn <- crossval(learner = knn.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,auc),show.info = F)
+cv.knn$aggr
+ROC(cv.knn$pred$data[,4],cv.knn$pred$data[,2])
+@
+
+\subsection{Sieci neuronowe}
+<<>>=
+neuralnet.learner <- makeLearner("classif.neuralnet", predict.type = 'prob')
+cv.neuralnet <- crossval(learner = neuralnet.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,auc),show.info = F)
+cv.neuralnet$aggr
+ROC(cv.neuralnet$pred$data[,4],cv.neuralnet$pred$data[,2])
+@
+
+\subsection{Lasy losowe}
+<<>>=
+randForest.learner <- makeLearner("classif.randomForest", predict.type = 'prob')
+cv.randForest <- crossval(learner = randForest.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,auc),show.info = F)
+cv.randForest$aggr
+ROC(cv.randForest$pred$data[,4],cv.randForest$pred$data[,2])
+@
+
+\subsection{Maszyna wektorów noœnych}
+<<>>=
+classif.svm 
+svm.learner <- makeLearner("classif.svm", predict.type = 'prob')
+cv.svm <- crossval(learner = svm.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,auc),show.info = F)
+cv.svm$aggr
+ROC(cv.svm$pred$data[,4],cv.svm$pred$data[,2])
+@
+
+
+\section{Klasyfikacja}
+\subsection{Metoda kNN}
+
 \subsection{Regresja Logistyczna}
 <<>>=
 #regresja logistyczna
@@ -178,7 +247,7 @@ Krzywe ROC
 <<>>=
 ROC<-function(pred.prob,true.labels){
   pred.ROCR <- ROCR::prediction(pred.prob, true.labels)
-  perf.ROCR <- performance(pred.ROCR.spam, "tpr", "fpr")
+  perf.ROCR <- performance(pred.ROCR, "tpr", "fpr")
   plot(perf.ROCR, print.cutoffs.at=seq(0.1,1,0.1), colorize=TRUE, lwd=2)
   return(performance(pred.ROCR, "auc")@y.values[1])
 }
