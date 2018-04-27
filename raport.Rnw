@@ -29,7 +29,6 @@ library(randomForest)
 library(mlr)
 library(kknn)
 
-
 opts_chunk$set(fig.path='figure/', fig.align='center', fig.pos='H',fig.width=5, fig.height=4,message=FALSE)
 # UWAGA: w razie potrzeby mo¿na zmieniaæ te ustawienia w danym chunk'u!
 @
@@ -161,157 +160,256 @@ ggplot(col.57, aes(x=rownames(col.57),y=V1,fill=rownames(col.57)))+geom_bar(stat
 @
 
 \section{Klasyfikacja}
-
+Do klasyfikacji u¿yjemy pakietu mlr, który umo¿liwia wykorzystanie ró¿nych metod w szybki sposób. Naszym zadaniem jest klasyfikacja, zatem tworzymy zadanie klasyfikacji:
 <<>>=
 task <- makeClassifTask(data = spam, target = "spam")
-cv_folds <- makeResampleDesc("CV", iters = 5)
+@
+
+<<echo=FALSE>>=
+ROC<-function(pred.prob,true.labels){
+  pred.ROCR <- ROCR::prediction(pred.prob, true.labels)
+  perf.ROCR <- ROCR::performance(pred.ROCR, "tpr", "fpr")
+  plot(perf.ROCR, print.cutoffs.at=seq(0.1,1,0.1), colorize=TRUE, lwd=2)
+}
+@
+W kolejnych podroŸdzia³ach przyjrzymy siê jak kolejno klasyfikatory: Regresja Logistyczna, LDA, klasyfikator Naiwny Bayesa, Metoda kNN, Sieci Neuronowe, Lasy Losowe oraz SVM poradz¹ sobie z naszym zbiorem danych. Dla wszystkich klasyfikatorów oprócz sieci neuronowych zastosowana zostanie walidacja krzy¿owa z 5 podzbiorami. Jako miary dopasowania wybrane zosta³y dok³adnoœæ i AUC.
+\subsection{Regresja Logistyczna}
+Pierwszym modelem bêdzie regresja logistyczna:
+<<>>=
+logistic.learner <- makeLearner("classif.logreg",predict.type = "prob")
+cv.logistic <- crossval(learner = logistic.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,mlr::auc),show.info = F)
+cv.logistic$aggr
+@
+Jak widaæ ju¿ zwyk³a regresja logistyczna dobrze odró¿nia nasze dane - dok³adnoœæ wynosi prawie 93\%. Poni¿ej widzimy krzyw¹ ROC:
+<<>>=
+ROC(cv.logistic$pred$data[,4],cv.logistic$pred$data[,2])
+@
+
+\subsection{LDA}
+Kolejnym klasyfikatorem bêdzie metoda LDA:
+<<>>=
+lda.learner <- makeLearner("classif.lda",predict.type = "prob")
+cv.lda <- crossval(learner = lda.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,mlr::auc),show.info = F)
+cv.lda$aggr
+@
+Jak widaæ daje ona nieco gorsze efekty, uzyskuj¹c prawie 89\% skutecznoœæ. Poni¿ej przedstawiono krzyw¹ ROC:
+<<>>=
+ROC(cv.lda$pred$data[,4],cv.lda$pred$data[,2])
+@
+
+\subsection{Klasyfikator Naiwny Baysa}
+Nastêpnym klasyfikatorem bêdzie klasyfikator naiwny Bayesa:
+<<>>=
+bayes.learner <- makeLearner("classif.naiveBayes", predict.type = 'prob')
+cv.bayes <- crossval(learner = bayes.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,mlr::auc),show.info = F)
+cv.bayes$aggr
+@
+Klasyfikator Bayesa poradzi³ sobie z tym zadaniem najgorzej z dotychczasowych klasyfikatorów. Wykres ROC dla tego klasyfikatora prezentuje siê nastêpuj¹co:
+
+<<>>=
+ROC(cv.bayes$pred$data[,4],cv.bayes$pred$data[,2])
+@
+
+\subsection{Metoda k-Najbli¿szych S¹siadów}
+Metoda k-Najbli¿szych S¹siadów jest nastêpn¹ z rozwa¿anych metod:
+<<>>=
+knn.learner <- makeLearner("classif.kknn", predict.type = 'prob')
+cv.knn <- crossval(learner = knn.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,mlr::auc),show.info = F)
+cv.knn$aggr
+@
+Uzyskuje ona dok³adnoœæ na poziomie nieca³ych 92\%, zatem wynik niewiele gorszy od regresji logistycznej. Poni¿ej widzimy wykres ROC:
+<<>>=
+ROC(cv.knn$pred$data[,4],cv.knn$pred$data[,2])
+@
+
+
+\subsection{Lasy losowe}
+Przyjrzyjmy siê równie¿ klasyfikacji za pomoc¹ lasów losowych:
+<<>>=
+randForest.learner <- makeLearner("classif.randomForest", predict.type = 'prob')
+cv.randForest <- crossval(learner = randForest.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,mlr::auc),show.info = F)
+cv.randForest$aggr
+@
+Otrzymujemy najlepszy dotychczas wynik - ponad 95\%. Ponadto AUC wynosi niemal¿e 100\%. Wykres krzywej ROC zaprezentowano poni¿ej: 
+
+<<>>=
+ROC(cv.randForest$pred$data[,4],cv.randForest$pred$data[,2])
+@
+
+\subsection{Maszyna wektorów noœnych}
+Ostatnim z rozwa¿anych klasyfikatorów jest SVM - maszyna wektorów noœnych:
+<<>>=
+svm.learner <- makeLearner("classif.svm", predict.type = 'prob')
+cv.svm <- crossval(learner = svm.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,mlr::auc),show.info = F)
+cv.svm$aggr
+@
+Otrzymany wynik plasuje metode SVM dla naszych danych na 2 miejscu z wynikiem ponad 93\%. Wykres krzywej ROC przedstawiono poni¿ej:
+
+<<>>=
+ROC(cv.svm$pred$data[,4],cv.svm$pred$data[,2])
+@
+
+\subsection{Porównanie}
+<<results='asis'>>=
+wyniki<-rbind(cv.logistic$aggr,cv.lda$aggr,cv.bayes$aggr,cv.knn$aggr,cv.randForest$aggr,cv.svm$aggr)
+wyniki<-as.data.frame(wyniki)
+rownames(wyniki)<-c('Regresja Logistyczna','LDA','Naiwny Bayes','kNN','Lasy Losowe','Maszyna Wektorów Noœnych')
+colnames(wyniki)<-c('Skutecznoœæ','AUC')
+xtab<-xtable(wyniki, caption = 'Porównanie skutecznoœci metod klasyfikacji dla danych "spam"')
+print(xtab)
+@
+
+<<>>=
+pred.logistic<-getRRPredictions(cv.logistic)
+pred.lda<-getRRPredictions(cv.lda)
+pred.bayes<-getRRPredictions(cv.bayes)
+pred.knn<-getRRPredictions(cv.knn)
+pred.randForest<-getRRPredictions(cv.randForest)
+pred.svm<-getRRPredictions(cv.svm)
+@
+Poni¿ej przedstawiono porównanie krzywych ROC dla wszystkich klasyfikatorów:
+<<>>=
+df = generateThreshVsPerfData(list(lda = pred.lda, logistic=pred.logistic, bayes=pred.bayes,knn=pred.knn,randForest=pred.randForest,svm = pred.svm), measures = list(fpr, tpr))
+ggplot(as.data.frame(df$data),aes(x=fpr,y=tpr, col=learner))+geom_line()
+@
+
+\section{Klasyfikacja z redukcj¹ wymiaru}
+Spróbujmy teraz przeprowadziæ podobn¹ analizê z uprzednim zastosowaniem algorytmu PCA w celu redukcji wymiaru. 
+
+<<>>=
+X.pca <- prcomp(spam[,-dim(spam)[2]], retx = T)
+@
+ANALIZA PCA - WYBOR OPTYMALNEJ LICZBY n.
+<<>>=
+n<-7
+X<-X.pca$x[,1:n]
+spam.PCA<-cbind(X,spam$spam)
+spam.PCA<-as.data.frame(spam.PCA)
+colnames(spam.PCA)[dim(spam.PCA)[2]]<-'spam'
+spam.PCA$spam<-as.factor(spam.PCA$spam)
+levels(spam.PCA$spam)<-c('email','spam')
+@
+
+<<>>=
+task <- makeClassifTask(data = spam.PCA, target = "spam")
 @
 
 \subsection{Regresja Logistyczna}
 <<>>=
 logistic.learner <- makeLearner("classif.logreg",predict.type = "prob")
-cv.logistic <- crossval(learner = logistic.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,auc),show.info = F)
+cv.logistic <- crossval(learner = logistic.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,mlr::auc),show.info = F)
 cv.logistic$aggr
+@
+
+<<>>=
 ROC(cv.logistic$pred$data[,4],cv.logistic$pred$data[,2])
+@
+
+<<>>=
+plotLearnerPrediction(learner = logistic.learner, task = task)
 @
 
 \subsection{LDA}
 <<>>=
 lda.learner <- makeLearner("classif.lda",predict.type = "prob")
-cv.lda <- crossval(learner = lda.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,auc),show.info = F)
+cv.lda <- crossval(learner = lda.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,mlr::auc),show.info = F)
 cv.lda$aggr
+@
+
+<<>>=
 ROC(cv.lda$pred$data[,4],cv.lda$pred$data[,2])
+@
+
+<<>>=
+plotLearnerPrediction(learner = lda.learner, task = task)
 @
 
 \subsection{Klasyfikator Naiwny Baysa}
 <<>>=
 bayes.learner <- makeLearner("classif.naiveBayes", predict.type = 'prob')
-cv.bayes <- crossval(learner = bayes.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,auc),show.info = F)
+cv.bayes <- crossval(learner = bayes.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,mlr::auc),show.info = F)
 cv.bayes$aggr
+@
+
+<<>>=
 ROC(cv.bayes$pred$data[,4],cv.bayes$pred$data[,2])
+@
+
+<<>>=
+plotLearnerPrediction(learner = bayes.learner, task = task)
 @
 
 \subsection{Metoda k-Najbli¿szych S¹siadów}
 <<>>=
 knn.learner <- makeLearner("classif.kknn", predict.type = 'prob')
-cv.knn <- crossval(learner = knn.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,auc),show.info = F)
+cv.knn <- crossval(learner = knn.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,mlr::auc),show.info = F)
 cv.knn$aggr
+@
+
+<<>>=
 ROC(cv.knn$pred$data[,4],cv.knn$pred$data[,2])
 @
 
-\subsection{Sieci neuronowe}
 <<>>=
-neuralnet.learner <- makeLearner("classif.neuralnet", predict.type = 'prob')
-cv.neuralnet <- crossval(learner = neuralnet.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,auc),show.info = F)
-cv.neuralnet$aggr
-ROC(cv.neuralnet$pred$data[,4],cv.neuralnet$pred$data[,2])
+plotLearnerPrediction(learner = knn.learner, task = task)
 @
+
 
 \subsection{Lasy losowe}
 <<>>=
 randForest.learner <- makeLearner("classif.randomForest", predict.type = 'prob')
-cv.randForest <- crossval(learner = randForest.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,auc),show.info = F)
+cv.randForest <- crossval(learner = randForest.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,mlr::auc),show.info = F)
 cv.randForest$aggr
+@
+
+<<>>=
 ROC(cv.randForest$pred$data[,4],cv.randForest$pred$data[,2])
+@
+
+<<>>=
+plotLearnerPrediction(learner = randForest.learner, task = task)
 @
 
 \subsection{Maszyna wektorów noœnych}
 <<>>=
-classif.svm 
 svm.learner <- makeLearner("classif.svm", predict.type = 'prob')
-cv.svm <- crossval(learner = svm.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,auc),show.info = F)
+cv.svm <- crossval(learner = svm.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,mlr::auc),show.info = F)
 cv.svm$aggr
+@
+
+<<>>=
 ROC(cv.svm$pred$data[,4],cv.svm$pred$data[,2])
 @
 
-
-\section{Klasyfikacja}
-\subsection{Metoda kNN}
-
-\subsection{Regresja Logistyczna}
 <<>>=
-#regresja logistyczna
-lr.spam <- glm(y~as.matrix(X),family = binomial(link='logit'))
-summ.lr.spam <- summary(lr.spam)
-tab1<-table(lr.spam$fitted.values>0.5,y)
-sum(diag(tab1))/sum(tab1)
-#regresja logistyczna ze wspó³czynnikami istotnymi statystycznie 
-significant <- summ.lr.spam$coefficients[2:dim(summ.lr.spam$coefficients)[1],4]<0.05
-X.sig <- X[,significant]
-lr.spam.sig <- glm(y~as.matrix(X.sig), family = binomial('logit'))
-summ.lr.spam.sig <- summary(lr.spam.sig)
-tab2<-table(lr.spam.sig$fitted.values>0.5,y)
-sum(diag(tab2))/sum(tab2)
-@
-Krzywe ROC
-<<>>=
-ROC<-function(pred.prob,true.labels){
-  pred.ROCR <- ROCR::prediction(pred.prob, true.labels)
-  perf.ROCR <- performance(pred.ROCR, "tpr", "fpr")
-  plot(perf.ROCR, print.cutoffs.at=seq(0.1,1,0.1), colorize=TRUE, lwd=2)
-  return(performance(pred.ROCR, "auc")@y.values[1])
-}
-ROC(lr.spam$fitted.values,y)
-ROC(lr.spam.sig$fitted.values,y)
+plotLearnerPrediction(learner = svm.learner, task = task)
 @
 
-\subsection{Klasyfikator naiwny Bayesa}
-<<>>=
-smple<-sample(dim(spam)[1],0.2*dim(spam)[1])
-test.set<-spam[smple,]
-train.set<-spam[-smple,]
-
-model<-naiveBayes(spam~.,data=train.set)
-naiveBayes.prediction<-predict(model,test.set)
-
+\subsection{Porównanie}
+<<results='asis'>>=
+wyniki<-rbind(cv.logistic$aggr,cv.lda$aggr,cv.bayes$aggr,cv.knn$aggr,cv.randForest$aggr,cv.svm$aggr)
+wyniki<-as.data.frame(wyniki)
+rownames(wyniki)<-c('Regresja Logistyczna','LDA','Naiwny Bayes','kNN','Lasy Losowe','Maszyna Wektorów Noœnych')
+colnames(wyniki)<-c('Skutecznoœæ','AUC')
+xtab<-xtable(wyniki, caption = 'Porównanie skutecznoœci metod klasyfikacji dla sk³adowych g³ównych danych "spam" ')
+print(xtab)
 @
-
-
-\subsection{Sieci neuronowe}
-
-
 
 <<>>=
-data<-spam
-data$spam<-ifelse(data$spam=='spam',1,0)
-maxs <- apply(data, 2, max) 
-mins <- apply(data, 2, min)
-scaled <- as.data.frame(scale(data, center = mins, scale = maxs - mins))
-index<-sample(dim(spam)[1],0.2*dim(spam)[1])
-train_ <- scaled[-index,]
-test_ <- scaled[index,]
-n<-names(spam)
-f<- as.formula(paste('spam~',paste(n[!n %in% 'spam'],collapse = ' + ')))
-nn <- neuralnet(f,data=train_,hidden=c(5,3),linear.output=T)
+pred.logistic<-getRRPredictions(cv.logistic)
+pred.lda<-getRRPredictions(cv.lda)
+pred.bayes<-getRRPredictions(cv.bayes)
+pred.knn<-getRRPredictions(cv.knn)
+pred.randForest<-getRRPredictions(cv.randForest)
+pred.svm<-getRRPredictions(cv.svm)
 @
-
-<<fig.cap='Sieæ neuronowa z dwoma warstwami ukrytymi.'>>=
-plot(nn)
-@
-
-
+Poni¿ej przedstawiono porównanie krzywych ROC dla wszystkich klasyfikatorów:
 <<>>=
-prediction.nn <- compute(nn,test_[,-dim(test_)[2]])
-pred.test<-ifelse(prediction.nn$net.result>0.5,'spam','email')
-tbl<-table(pred.test,test_$spam)
-sum(diag(tbl))/sum(tbl)
-ROC(prediction.nn$net.result,test_$spam)
-@
-
-\subsection{Lasy losowe}
-<<>>=
-model<-randomForest(spam~.,data=spam, subset = -index)
-rand.forest.prediction<-predict(model,test_,type = 'prob')
-ROC(rand.forest.prediction[,2],test_$spam)
-rand.forest.prediction.labels<-predict(model,test_,type = 'response')
-table(rand.forest.prediction.labels,test_$spam)
+df = generateThreshVsPerfData(list(lda = pred.lda, logistic=pred.logistic, bayes=pred.bayes,knn=pred.knn,randForest=pred.randForest,svm = pred.svm), measures = list(fpr, tpr))
+ggplot(as.data.frame(df$data),aes(x=fpr,y=tpr, col=learner))+geom_line()
 @
 
 
-\section{Klasyfikacja z redukcj¹ wymiaru}
-\subsection{Regresja Logistyczna}
-\subsection{Klasyfikator naiwny Bayesa}
-\subsection{Lasy losowe}
 
 \section{Analiza skupieñ}
 \subsection{K-means}
@@ -319,7 +417,7 @@ table(rand.forest.prediction.labels,test_$spam)
 k <- 2
 kmeans.k3 <- kmeans(X,centers=k,iter.max=10)
 X.kmeans.clusters <- kmeans.k3$cluster
-table(X.kmeans,y)
+table(X.kmeans.clusters,y)
 X.pca <- prcomp(X,retx=T)
 X.pca.data <- X.pca$x[,1:2] 
 X.pca.data.scaled<-scale(X.pca.data)
