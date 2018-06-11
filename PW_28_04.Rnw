@@ -31,7 +31,7 @@ library(kknn)
 library(corrgram)
 library(clValid)
 library(mclust)
-
+library(clv)
 opts_chunk$set(fig.path='figure/', fig.align='center', fig.pos='H',fig.width=5, fig.height=4,message=FALSE)
 # UWAGA: w razie potrzeby moøna zmieniaÊ te ustawienia w danym chunk'u!
 @
@@ -119,10 +119,21 @@ Na poczπtku analiz przyjrzeliúmy siÍ poszczegÛlnym zmiennym, wyznaczajπc podstaw
 summary(X)
 @
 
-<<kowariancja_zmiennych, echo=FALSE, eval=TRUE, fig.height=7, fig.width=7, fig.cap="Kowariancja miÍdzy zmiennymi">>=
-kowariancja <- cov(X)
-heatmap(kowariancja)
+Na poczπtku analiz przyjrzeliúmy siÍ poszczegÛlnym zmiennym, wyznaczajπc podstawowe statystyki opisowe (w zwiπzku z duøπ iloúciπ zmiennych nie umieszczamy ich w raporcie) i korelacje pomiÍdzy nimi. Najpierw na zbiorze wszystkich zmiennych, jednak tak duøy wykres korelacji okaza≥ siÍ byÊ bardzo nieczytelny, dlatego teø zrobiliúmy trzy osobne zestawienia dotyczπce 3 podgrup, kierujπc siÍ opisem poszczegÛlnych zmiennych.
+<<korelogramy, echo=FALSE, eval=TRUE, fig.height=6, fig.width=6>>=
+corrgram(X[,1:24], order=FALSE, lower.panel=panel.shade,
+         upper.panel=panel.pie, text.panel=panel.txt)
+
+corrgram(X[,25:48], order=FALSE, lower.panel=panel.shade,
+         upper.panel=panel.pie, text.panel=panel.txt)
+
+corrgram(X[,49:54], order=FALSE, lower.panel=panel.shade,
+         upper.panel=panel.pie, text.panel=panel.txt)
+
+corrgram(X[,55:57], order=FALSE, lower.panel=panel.shade,
+         upper.panel=panel.pie, text.panel=panel.txt)
 @
+
 
 NastÍpnie skupiliúmy sie na zmiennej objaúnianej
 <<zm_objasniajaca, echo=TRUE, eval=TRUE>>=
@@ -211,7 +222,7 @@ q1<-qplot(X$word_freq_you, geom="histogram") +xlab("Procentowy udzia≥ s≥owa 'you
 q2<-qplot(X$word_freq_will, geom="histogram")+xlab("Procentowy udzia≥ s≥owa 'will' w mailu")
 multiplot( q1,q2, cols=2)
 @
-Jak widaÊ charakterystyczne dla naszych danych jest czÍste wystÍpowanie wartoúci 0. Dodatkowo dane nie przypominajπ rozk≥adu normalnego i sπ ciÍøkoogonowe. Warto zatem rozwaøyÊ transformacjÍ logarytmicznπ. Ze wzglÍdu na wspomniane wartoúci zerowe rozwaøymy jednak transformacjÍ $\log (x+0.1)$.
+Charakter rozk≥adÛw jest dyskretno-ciπg≥y z atomem w 0. Dodatkowo dane nie przypominajπ rozk≥adu normalnego i sπ ciÍøkoogonowe. Warto zatem rozwaøyÊ transformacjÍ logarytmicznπ. Ze wzglÍdu na wspomniane wartoúci zerowe rozwaøymy jednak transformacjÍ $\log (x+0.1)$.
 <<>>=
 q1<-qplot(log(X$word_freq_you+0.1), geom="histogram") +xlab("Logarytm z procentowego udzia≥u s≥owa 'you' w mailu")
 q2<-qplot(log(X$word_freq_will+0.1), geom="histogram")+xlab("Logarytm z procentowego udzia≥u s≥owa 'will' w mailu")
@@ -221,6 +232,44 @@ Oczywiúcie dalej mamy do czynienia z atomem w punkcie $\log (0.1)$, jednak pozos
 Po wstÍpnej analizie przechodzimy do bardziej z≥oøonych rozwaøaÒ zwiπzanych z postawionym problemem.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Metody}
+Projekt skupia siÍ na zagadnieniach klasyfikacji i analizy skupieÒ na przyk≥adzie zbioru danych "spam". Celem projektu jest porÛwnanie skutecznoúci metod klasyfikacji oraz jakoúci metod analizy skupieÒ. W raporcie rozpatrzyliúmy te same metody z uwzglÍdnieniem redukcji wymiaru za pomocπ metody PCA. W przypadku klasyfikacji wykorzystaliúmy nastÍpujπce metody:
+\begin{itemize}
+\item Regresja Logistyczna
+\item LDA 
+\item Klasyfikator Naiwny Bayesa
+\item Metoda k Najbliøszych SπsiadÛw
+\item Lasy Losowe
+\item SVM
+\item XGBoost
+\end{itemize}
+Do porÛwnania skutecznoúci klasyfikacji wykorzystaliúmy wskaüniki:
+\begin{itemize}
+\item SkutecznoúÊ (accuracy)
+\item ROC
+\item AUC
+\item Czu≥oúÊ 
+\item SpecyficznoúÊ
+\end{itemize}
+Do analizy skupieÒ zastosowaliúmy:
+\begin{itemize}
+\item k-Means
+\item PAM
+\item AGNES
+\item DIANA
+\end{itemize}
+Do analizy jakoúci grupowania wykorzystaliúmy wskaüniki zarÛwno wewnÍtrzne jak i zewnÍtrzne: 
+\begin{itemize}
+\item Silhouette
+\item wskaünik Dunn'a
+\item wskaünik Connectivity
+\item 
+\item wskaünik Randa
+\item wskaünik Jaccarda
+\item wskaünik Fowlkesa-Mallowsa 
+\end{itemize}
+
+
 \section{Klasyfikacja}
 Zajmiemy siÍ teraz zagadnieniem klasyfikacji. Wykorzystamy pakiet mlr, ktÛry umoøliwia zastosowanie rÛønych metod w szybki sposÛb. Zaczynamy od stworzenia zadania klasyfikacji. Dostrajanie parametrÛW i badanie skutecznoúci zostanie wykonane za pomocπ walidacji krzyøowej na 80\% danych, a nastÍpnie na pozosta≥ych 20\% sprawdzimy uzyskanπ skutecznoúÊ.
 <<zad_klasyf, echo=TRUE, eval=TRUE>>=
@@ -308,6 +357,7 @@ test.pred<-predict(mod,newdata = test)
 knn.test.acc<-mean(test.pred$data[,1]==test.pred$data[,4])
 knn.test.acc
 @
+
 Jest on podobny do wyniku uzyskanego metodπ walidacji krzyøowej na zbiorze treningowym, co czyni model wiarygodnym.
 Poniøej widzimy wykres ROC.
 <<kNN_ROC, echo=FALSE, eval=TRUE, fig.cap="k-NN: krzywa ROC">>=
@@ -818,6 +868,423 @@ tab.pam.agnes
 matchClasses(tab.pam.agnes, method="exact")
 
 
+@
+
+\subsubsection{Wskaüniki wewnÍtrzne}
+W kolejnym kroku dokonamy analizy jakoúci grupowania, odwo≥ujπc siÍ wy≥πcznie do w≥asnoúci zawartych w danych. Weümiemy pod uwagÍ m. in. takie w≥asnoúci jak: zwartoúÊ, spÛjnoúÊ czy separacja przestrzenna. Pos≥uøymy siÍ wskaünikami Silhouette, Dunn'a oraz tzw. Connectivity.
+
+<<tot_internal, echo=FALSE, eval=TRUE, warning=FALSE>>=
+mac_pod<-daisy(spam.cechy)
+############### silhuette ###################
+# kmeans
+cl2.kmeans <- kmeans(spam.cechy, centers=2)
+cl3.kmeans <- kmeans(spam.cechy, centers=3)
+cl4.kmeans <- kmeans(spam.cechy, centers=4)
+cl5.kmeans <- kmeans(spam.cechy, centers=5)
+cl6.kmeans <- kmeans(spam.cechy, centers=6)
+
+sil.k2.kmeans <- silhouette(cl2.kmeans$cluster, mac_pod)
+sil.k3.kmeans <- silhouette(cl3.kmeans$cluster, mac_pod)
+sil.k4.kmeans <- silhouette(cl4.kmeans$cluster, mac_pod)
+sil.k5.kmeans <- silhouette(cl5.kmeans$cluster, mac_pod)
+sil.k6.kmeans <- silhouette(cl6.kmeans$cluster, mac_pod)
+
+# pam
+cl2.pam <- pam(spam.cechy, k=2)
+cl3.pam <- pam(spam.cechy, k=3)
+cl4.pam <- pam(spam.cechy, k=4)
+cl5.pam <- pam(spam.cechy, k=5)
+cl6.pam <- pam(spam.cechy, k=6)
+
+sil.k2.pam <- silhouette(cl2.pam, mac_pod)
+sil.k3.pam <- silhouette(cl3.pam, mac_pod)
+sil.k4.pam <- silhouette(cl4.pam, mac_pod)
+sil.k5.pam <- silhouette(cl5.pam, mac_pod)
+sil.k6.pam <- silhouette(cl6.pam, mac_pod)
+
+#agnes
+agnes_spam<-agnes(spam.cechy)
+cl2.agnes <- cutree(agnes_spam, k=2)
+cl3.agnes <- cutree(agnes_spam, k=3)
+cl4.agnes <- cutree(agnes_spam, k=4)
+cl5.agnes <- cutree(agnes_spam, k=5)
+cl6.agnes <- cutree(agnes_spam, k=6)
+
+sil.k2.agnes <- silhouette(cl2.agnes, mac_pod)
+sil.k3.agnes <- silhouette(cl3.agnes, mac_pod)
+sil.k4.agnes <- silhouette(cl4.agnes, mac_pod)
+sil.k5.agnes <- silhouette(cl5.agnes, mac_pod)
+sil.k6.agnes <- silhouette(cl6.agnes, mac_pod)
+
+# diana
+diana_spam<- diana(spam.cechy)
+cl2.diana <- cutree(diana_spam, k=2)
+cl3.diana <- cutree(diana_spam, k=3)
+cl4.diana <- cutree(diana_spam, k=4)
+cl5.diana <- cutree(diana_spam, k=5)
+cl6.diana <- cutree(diana_spam, k=6)
+
+sil.k2.diana <- silhouette(cl2.diana, mac_pod)
+sil.k3.diana <- silhouette(cl3.diana, mac_pod)
+sil.k4.diana <- silhouette(cl4.diana, mac_pod)
+sil.k5.diana <- silhouette(cl5.diana, mac_pod)
+sil.k6.diana <- silhouette(cl6.diana, mac_pod)
+
+#summary(sil.k2)$clus.avg.widths[[1]]
+#summary(sil.k3)$clus.avg.widths[[1]]
+#summary(sil.k4)$clus.avg.widths[[1]]
+#summary(sil.k5)$clus.avg.widths[[1]]
+#summary(sil.k6)$clus.avg.widths[[1]]
+#summary(sil.k2)$clus.avg.widths[[2]]
+#summary(sil.k3)$clus.avg.widths[[2]]
+#summary(sil.k4)$clus.avg.widths[[2]]
+#summary(sil.k5)$clus.avg.widths[[2]]
+#summary(sil.k6)$clus.avg.widths[[2]]
+
+plot(c(2:6), c(
+summary(sil.k2.kmeans)$si.summary[[4]],
+summary(sil.k3.kmeans)$si.summary[[4]],
+summary(sil.k4.kmeans)$si.summary[[4]],
+summary(sil.k5.kmeans)$si.summary[[4]],
+summary(sil.k6.kmeans)$si.summary[[4]]), xlab="Silhouette", ylab="Liczba klastrÛw", ylim=c(0.5, 1), type='b', pch=8, col="hotpink4", lwd=2, main="Silhouette")
+lines( c(2:6),
+c(summary(sil.k2.pam)$si.summary[[4]],
+summary(sil.k3.pam)$si.summary[[4]],
+summary(sil.k4.pam)$si.summary[[4]],
+summary(sil.k5.pam)$si.summary[[4]],
+summary(sil.k6.pam)$si.summary[[4]]), type='b', pch=9, col="pink", lwd=2)
+lines( c(2:6),
+c(summary(sil.k2.agnes)$si.summary[[4]],
+summary(sil.k3.agnes)$si.summary[[4]],
+summary(sil.k4.agnes)$si.summary[[4]],
+summary(sil.k5.agnes)$si.summary[[4]],
+summary(sil.k6.agnes)$si.summary[[4]]), type='b', pch=10, col="royalblue", lwd=2)
+lines( c(2:6),
+c(summary(sil.k2.diana)$si.summary[[4]],
+summary(sil.k3.diana)$si.summary[[4]],
+summary(sil.k4.diana)$si.summary[[4]],
+summary(sil.k5.diana)$si.summary[[4]],
+summary(sil.k6.diana)$si.summary[[4]]), type='b', pch=11, col="orchid", lwd=2)
+legend("bottomleft", c("kmeans", "pam", "agnes", "diana"), col=c("hotpink4", "pink", "royalblue", "orchid"), pch=c(8,9,10,11), cex=0.9, title="Legenda")
+@
+Nietrudno zauwaøyÊ, øe w przypadku kaødej z metod miara silhouette osiπga najwiÍkszπ wartoúÊ w przypadku podzia≥u na 2 skupienia.
+<<dunn, echo=FALSE, eval=TRUE, warning=FALSE>>=
+### WSKAèNIK DUNN'A ###
+plot ( c(2:6), c(dunn(distance=as.matrix(mac_pod), cl2.kmeans$cluster),
+dunn(as.matrix(mac_pod), cl3.kmeans$cluster),
+dunn(as.matrix(mac_pod), cl4.kmeans$cluster),
+dunn(as.matrix(mac_pod), cl5.kmeans$cluster),
+dunn(as.matrix(mac_pod), cl6.kmeans$cluster)), main="Wskaünik Dunn'a", ylim=c(0, 1), xlab="Wskaünik Dunn'a", ylab="Liczba klastrÛw", type='b', lwd=2, pch=8, col="hotpink4")
+lines( c(2:6),
+c(dunn(distance=as.matrix(mac_pod), cl2.pam$clustering),
+dunn(as.matrix(mac_pod), cl3.pam$clustering),
+dunn(as.matrix(mac_pod), cl4.pam$clustering),
+dunn(as.matrix(mac_pod), cl5.pam$clustering),
+dunn(as.matrix(mac_pod), cl6.pam$clustering)), type='b', pch=9, lwd=2, col="pink")
+lines( c(2:6), 
+c(dunn(distance=as.matrix(mac_pod), cl2.agnes),
+dunn(as.matrix(mac_pod), cl3.agnes),
+dunn(as.matrix(mac_pod), cl4.agnes),
+dunn(as.matrix(mac_pod), cl5.agnes),
+dunn(as.matrix(mac_pod), cl6.agnes)), type='b', lwd=2, pch=10, col="royalblue")
+lines( c(2:6),
+c(dunn(distance=as.matrix(mac_pod), cl2.diana),
+dunn(as.matrix(mac_pod), cl3.diana),
+dunn(as.matrix(mac_pod), cl4.diana),
+dunn(as.matrix(mac_pod), cl5.diana),
+dunn(as.matrix(mac_pod), cl6.diana)), type='b', lwd=2, pch=11, col="orchid")
+legend("topright", c("kmeans", "pam", "agnes", "diana"), col=c("hotpink4", "pink", "royalblue", "orchid"), pch=c(8,9,10,11), cex=0.9, title="Legenda")
+@
+Wartoúci wskaünikÛw Dunn'a sπ bardzo odmienne. W przypadku AGNES i DIANY wskaünik ten wskazuje odpowiednio podzia≥y na 3 i 4 klastry. Wartoúci wskaünika Dunn'a dla k-means i PAM sπ tak ma≥e, øe nie jest moøliwy odczyt bezpoúrednio z wykresu, dlatego zawarliúmy wartoúci w poniøszej tabelce.
+<<dunn_tab, echo=FALSE, eval=TRUE, warning=FALSE, results='asis'>>=
+w4<-c(dunn(distance=as.matrix(mac_pod), cl2.diana),
+dunn(as.matrix(mac_pod), cl3.diana),
+dunn(as.matrix(mac_pod), cl4.diana),
+dunn(as.matrix(mac_pod), cl5.diana),
+dunn(as.matrix(mac_pod), cl6.diana))
+w3<-c(dunn(distance=as.matrix(mac_pod), cl2.agnes),
+dunn(as.matrix(mac_pod), cl3.agnes),
+dunn(as.matrix(mac_pod), cl4.agnes),
+dunn(as.matrix(mac_pod), cl5.agnes),
+dunn(as.matrix(mac_pod), cl6.agnes))
+w2<-c(dunn(distance=as.matrix(mac_pod), cl2.pam$clustering),
+dunn(as.matrix(mac_pod), cl3.pam$clustering),
+dunn(as.matrix(mac_pod), cl4.pam$clustering),
+dunn(as.matrix(mac_pod), cl5.pam$clustering),
+dunn(as.matrix(mac_pod), cl6.pam$clustering))
+w1<-c(dunn(distance=as.matrix(mac_pod), cl2.kmeans$cluster),
+dunn(as.matrix(mac_pod), cl3.kmeans$cluster),
+dunn(as.matrix(mac_pod), cl4.kmeans$cluster),
+dunn(as.matrix(mac_pod), cl5.kmeans$cluster),
+dunn(as.matrix(mac_pod), cl6.kmeans$cluster))
+w<-c("k-means", "pam", "agnes", "diana")
+k<-c("2","3", "4","5", "6")
+macierz<-rbind(w1,w2,w3,w4)
+dimnames(macierz)=list(w,k)
+tabela3<-xtable(macierz, digits=5, row.names=FALSE, caption="Wskaünik Dunn'a", label="tabela:tabela3")
+
+# align(tabela)<-"|c|c|c|c|c|c|"
+print(tabela3, type="latex", table.placement="H", sanitize.text.function = function(x) {x})
+@
+Kolejnym wskaünikiem, ktÛre wartoúci wyznaczymy jest tzw. Connectivity zwiπzany ze spÛjnoúciπ i zdolnoúciπ przy≥πczeniowπ. Im mniejsza wartoúÊ tego wskaünika tym lepiej.
+<<connectivity, echo=FALSE, eval=TRUE, warning=FALSE>>=
+### Connectivity ### 
+
+pred2.kmeans <- as.integer(cl2.kmeans$cluster)
+pred3.kmeans <- as.integer(cl3.kmeans$cluster)
+pred4.kmeans <- as.integer(cl4.kmeans$cluster)
+pred5.kmeans <- as.integer(cl5.kmeans$cluster)
+pred6.kmeans <- as.integer(cl6.kmeans$cluster)
+
+pred2.pam <- as.integer(cl2.pam$clustering)
+pred3.pam <- as.integer(cl3.pam$clustering)
+pred4.pam <- as.integer(cl4.pam$clustering)
+pred5.pam <- as.integer(cl5.pam$clustering)
+pred6.pam <- as.integer(cl6.pam$clustering)
+
+pred2.agnes <- as.integer(cl2.agnes)
+pred3.agnes <- as.integer(cl3.agnes)
+pred4.agnes <- as.integer(cl4.agnes)
+pred5.agnes <- as.integer(cl5.agnes)
+pred6.agnes <- as.integer(cl6.agnes)
+
+pred2.diana <- as.integer(cl2.diana)
+pred3.diana <- as.integer(cl3.diana)
+pred4.diana <- as.integer(cl4.diana)
+pred5.diana <- as.integer(cl5.diana)
+pred6.diana <- as.integer(cl6.diana)
+
+
+plot(c(2:6), c(
+connectivity(spam.cechy, pred2.kmeans),
+connectivity(spam.cechy, pred3.kmeans),
+connectivity(spam.cechy, pred4.kmeans),
+connectivity(spam.cechy, pred5.kmeans),
+connectivity(spam.cechy, pred6.kmeans)), type='b', lwd=2, col="hotpink4", main="Connectivity", pch=8, ylim=c(0, 150), xlab="Liczba klastrÛw", ylab="Connectivity")
+lines(c(2:6), c(
+connectivity(spam.cechy, pred2.pam),
+connectivity(spam.cechy, pred3.pam),
+connectivity(spam.cechy, pred4.pam),
+connectivity(spam.cechy, pred5.pam),
+connectivity(spam.cechy, pred6.pam)), type='b', lwd=2, col="pink", pch=9)
+lines(c(2:6), c(
+connectivity(spam.cechy, pred2.agnes),
+connectivity(spam.cechy, pred3.agnes),
+connectivity(spam.cechy, pred4.agnes),
+connectivity(spam.cechy, pred5.agnes),
+connectivity(spam.cechy, pred6.agnes)), type='b', lwd=2, col="royalblue", pch=10)
+lines(c(2:6), c(
+connectivity(spam.cechy, pred2.diana),
+connectivity(spam.cechy, pred3.diana),
+connectivity(spam.cechy, pred4.diana),
+connectivity(spam.cechy, pred5.diana),
+connectivity(spam.cechy, pred6.diana)), type='b', lwd=2, col="orchid", pch=11)
+legend("topleft", c("kmeans", "pam", "agnes", "diana"), col=c("hotpink4", "pink", "royalblue", "orchid"), pch=c(8,9,10,11), cex=0.9, title="Legenda")
+@
+W tym przypadku rÛwnieø nie moøemy porÛwnaÊ wartoúci jednoznacznie, dlatego pos≥uøymy siÍ tabelkπ pomocniczπ.
+<<conn_tab, echo=FALSE, eval=TRUE, results='asis', warning=FALSE>>=
+w4<-c(
+connectivity(spam.cechy, pred2.diana),
+connectivity(spam.cechy, pred3.diana),
+connectivity(spam.cechy, pred4.diana),
+connectivity(spam.cechy, pred5.diana),
+connectivity(spam.cechy, pred6.diana))
+w3<-c(
+connectivity(spam.cechy, pred2.agnes),
+connectivity(spam.cechy, pred3.agnes),
+connectivity(spam.cechy, pred4.agnes),
+connectivity(spam.cechy, pred5.agnes),
+connectivity(spam.cechy, pred6.agnes))
+w2<-c(
+connectivity(spam.cechy, pred2.pam),
+connectivity(spam.cechy, pred3.pam),
+connectivity(spam.cechy, pred4.pam),
+connectivity(spam.cechy, pred5.pam),
+connectivity(spam.cechy, pred6.pam))
+w1<-c(
+connectivity(spam.cechy, pred2.kmeans),
+connectivity(spam.cechy, pred3.kmeans),
+connectivity(spam.cechy, pred4.kmeans),
+connectivity(spam.cechy, pred5.kmeans),
+connectivity(spam.cechy, pred6.kmeans))
+w<-c("k-means", "pam", "agnes", "diana")
+k<-c("2","3", "4","5", "6")
+macierz<-rbind(w1,w2,w3,w4)
+dimnames(macierz)=list(w,k)
+tabela2<-xtable(macierz, digits=5, row.names=FALSE, caption="Wskaünik Connectivity", label="tabela:tabela2")
+
+# align(tabela)<-"|c|c|c|c|c|c|"
+print(tabela2, type="latex", table.placement="H", sanitize.text.function = function(x) {x})
+@
+
+
+
+\subsubsection{Wskaüniki zewnÍtrzne}
+<<zgodnosc_partycji2, echo=FALSE, eval=TRUE, results='asis'>>=
+
+# porÛwnanie wynikow grupowania z rzeczywistπ przynaleznoscia do klas
+tab.spam.kmeans <- table(kmeans.k2$cluster, spam$spam)
+#matchClasses(tab.spam.kmeans, method="exact")
+
+tab.spam.pam <- table(spam.pam2$clustering, spam$spam)
+#matchClasses(tab.spam.pam, method="exact")
+
+tab.spam.agnes <- table(spam.agnes.avg.k2, spam$spam)
+#matchClasses(tab.spam.agnes, method="exact")
+
+tab.spam.diana <- table(spam.diana.k2, spam$spam)
+#matchClasses(tab.spam.diana, method="exact")
+
+tab.pam.agnes <- table(spam.pam2$clustering, spam.agnes.avg.k2)
+#matchClasses(tab.pam.agnes, method="exact")
+
+w2<-c(tab.spam.pam[1],tab.spam.pam[2],tab.spam.pam[3],tab.spam.pam[4],100*( tab.spam.kmeans[1]+tab.spam.kmeans[4] )/4)
+w1<-c(tab.spam.kmeans[1],tab.spam.kmeans[2],tab.spam.kmeans[3],tab.spam.kmeans[4], 100*( tab.spam.pam[1]+tab.spam.pam[4] )/4)
+w3<-c(tab.spam.agnes[1],tab.spam.agnes[2],tab.spam.agnes[3],tab.spam.agnes[4], 100*( tab.spam.agnes[1]+tab.spam.agnes[4] )/4)
+w4<-c(tab.spam.diana[1],tab.spam.diana[2],tab.spam.diana[3],tab.spam.diana[4], 100*( tab.spam.diana[1]+tab.spam.diana[4] )/4)
+
+w<-c("k-means", "pam", "agnes", "diana")
+k<-c("e-mail_1","e-mail_2", "spam_1","spam_2", "matched(%)")
+macierz<-rbind(w1,w2,w3,w4)
+dimnames(macierz)=list(w,k)
+tabela<-xtable(macierz, digits=0, row.names=FALSE, caption="Dopasowanie klas", label="tabela:tabela")
+
+# align(tabela)<-"|c|c|c|c|c|c|"
+print(tabela, type="latex", table.placement="H", sanitize.text.function = function(x) {x})
+
+
+@
+
+<<wsk_zew_Rand_jaccard_fawkl, echo=FALSE, eval=TRUE>>=
+library(clv)
+std2kmeans <- std.ext(pred2.kmeans, as.integer(spam$spam))
+rand2kmeans <- clv.Rand(std2kmeans)
+jaccard2kmeans <- clv.Jaccard(std2kmeans)
+folk.mal2kmeans <- clv.Folkes.Mallows(std2kmeans)
+
+std3kmeans <- std.ext(pred3.kmeans, as.integer(spam$spam))
+rand3kmeans <- clv.Rand(std3kmeans)
+jaccard3kmeans <- clv.Jaccard(std3kmeans)
+folk.mal3kmeans <- clv.Folkes.Mallows(std3kmeans)
+
+std4kmeans <- std.ext(pred4.kmeans, as.integer(spam$spam))
+rand4kmeans <- clv.Rand(std4kmeans)
+jaccard4kmeans <- clv.Jaccard(std4kmeans)
+folk.mal4kmeans <- clv.Folkes.Mallows(std4kmeans)
+
+std5kmeans <- std.ext(pred5.kmeans, as.integer(spam$spam))
+rand5kmeans <- clv.Rand(std5kmeans)
+jaccard5kmeans <- clv.Jaccard(std5kmeans)
+folk.mal5kmeans <- clv.Folkes.Mallows(std5kmeans)
+
+std6kmeans <- std.ext(pred6.kmeans, as.integer(spam$spam))
+rand6kmeans <- clv.Rand(std6kmeans)
+jaccard6kmeans <- clv.Jaccard(std6kmeans)
+folk.mal6kmeans <- clv.Folkes.Mallows(std6kmeans)
+
+###
+
+std2pam <- std.ext(pred2.pam, as.integer(spam$spam))
+rand2pam <- clv.Rand(std2pam)
+jaccard2pam <- clv.Jaccard(std2pam)
+folk.mal2pam <- clv.Folkes.Mallows(std2pam)
+
+std3pam <- std.ext(pred3.pam, as.integer(spam$spam))
+rand3pam <- clv.Rand(std3pam)
+jaccard3pam <- clv.Jaccard(std3pam)
+folk.mal3pam <- clv.Folkes.Mallows(std3pam)
+
+std4pam <- std.ext(pred4.pam, as.integer(spam$spam))
+rand4pam <- clv.Rand(std4pam)
+jaccard4pam <- clv.Jaccard(std4pam)
+folk.mal4pam <- clv.Folkes.Mallows(std4pam)
+
+std5pam <- std.ext(pred5.pam, as.integer(spam$spam))
+rand5pam <- clv.Rand(std5pam)
+jaccard5pam <- clv.Jaccard(std5pam)
+folk.mal5pam <- clv.Folkes.Mallows(std5pam)
+
+std6pam <- std.ext(pred6.pam, as.integer(spam$spam))
+rand6pam <- clv.Rand(std6pam)
+jaccard6pam <- clv.Jaccard(std6pam)
+folk.mal6pam <- clv.Folkes.Mallows(std6pam)
+
+## 
+
+std2agnes <- std.ext(pred2.agnes, as.integer(spam$spam))
+rand2agnes <- clv.Rand(std2agnes)
+jaccard2agnes <- clv.Jaccard(std2agnes)
+folk.mal2agnes <- clv.Folkes.Mallows(std2agnes)
+
+std3agnes <- std.ext(pred3.agnes, as.integer(spam$spam))
+rand3agnes <- clv.Rand(std3agnes)
+jaccard3agnes <- clv.Jaccard(std3agnes)
+folk.mal3agnes <- clv.Folkes.Mallows(std3agnes)
+
+std4agnes <- std.ext(pred4.agnes, as.integer(spam$spam))
+rand4agnes <- clv.Rand(std4agnes)
+jaccard4agnes <- clv.Jaccard(std4agnes)
+folk.mal4agnes <- clv.Folkes.Mallows(std4agnes)
+
+std5agnes <- std.ext(pred5.agnes, as.integer(spam$spam))
+rand5agnes <- clv.Rand(std5agnes)
+jaccard5agnes <- clv.Jaccard(std5agnes)
+folk.mal5agnes <- clv.Folkes.Mallows(std5agnes)
+
+std6agnes <- std.ext(pred6.agnes, as.integer(spam$spam))
+rand6agnes <- clv.Rand(std6agnes)
+jaccard6agnes <- clv.Jaccard(std6agnes)
+folk.mal6agnes <- clv.Folkes.Mallows(std6agnes)
+
+###
+
+std2diana <- std.ext(pred2.diana, as.integer(spam$spam))
+rand2diana <- clv.Rand(std2diana)
+jaccard2diana <- clv.Jaccard(std2diana)
+folk.mal2diana <- clv.Folkes.Mallows(std2diana)
+
+std3diana <- std.ext(pred3.diana, as.integer(spam$spam))
+rand3diana <- clv.Rand(std3diana)
+jaccard3diana <- clv.Jaccard(std3diana)
+folk.mal3diana <- clv.Folkes.Mallows(std3diana)
+
+std4diana <- std.ext(pred4.diana, as.integer(spam$spam))
+rand4diana <- clv.Rand(std4diana)
+jaccard4diana <- clv.Jaccard(std4diana)
+folk.mal4diana <- clv.Folkes.Mallows(std4diana)
+
+std5diana <- std.ext(pred5.diana, as.integer(spam$spam))
+rand5diana <- clv.Rand(std5diana)
+jaccard5diana <- clv.Jaccard(std5diana)
+folk.mal5diana <- clv.Folkes.Mallows(std5diana)
+
+std6diana <- std.ext(pred6.diana, as.integer(spam$spam))
+rand6diana <- clv.Rand(std6diana)
+jaccard6diana <- clv.Jaccard(std6diana)
+folk.mal6diana <- clv.Folkes.Mallows(std6diana)
+
+plot(c(2:6), c(rand2kmeans, rand3kmeans, rand4kmeans, rand5kmeans, rand6kmeans), type='b', lwd=2, col="hotpink4", main="Rand", pch=8, ylim=c(0.5, 0.6), xlab="Liczba klastrÛw", ylab="Rand")
+lines(c(2:6), c(rand2pam, rand3pam, rand4pam, rand5pam, rand6pam), type='b', lwd=2, col="pink", pch=9)
+lines(c(2:6), c(rand2agnes, rand3agnes, rand4agnes, rand5agnes, rand6agnes), type='b', lwd=2, col="royalblue", pch=10)
+lines(c(2:6), c(rand2diana, rand3diana, rand4diana, rand5diana, rand6diana), type='b', lwd=2, col="orchid", pch=11)
+legend("topleft", c("kmeans", "pam", "agnes", "diana"), col=c("hotpink4", "pink", "royalblue", "orchid"), pch=c(8,9,10,11), cex=0.9, title="Legenda")
+
+@
+
+<<wsk_zew_cd, echo=FALSE, eval=TRUE>>=
+plot(c(2:6), c(jaccard2kmeans, jaccard3kmeans, jaccard4kmeans, jaccard5kmeans, jaccard6kmeans), type='b', lwd=2, col="hotpink4", main="Jaccard", pch=8, ylim=c(0.3, 0.55), xlab="Liczba klastrÛw", ylab="Jaccard")
+lines(c(2:6), c(jaccard2pam, jaccard3pam, jaccard4pam, jaccard5pam, jaccard6pam), type='b', lwd=2, col="pink", pch=9)
+lines(c(2:6), c(jaccard2agnes, jaccard3agnes, jaccard4agnes, jaccard5agnes, jaccard6agnes), type='b', lwd=2, col="royalblue", pch=10)
+lines(c(2:6), c(jaccard2diana, jaccard3diana, jaccard4diana, jaccard5diana, jaccard6diana), type='b', lwd=2, col="orchid", pch=11)
+legend("bottomleft", c("kmeans", "pam", "agnes", "diana"), col=c("hotpink4", "pink", "royalblue", "orchid"), pch=c(8,9,10,11), cex=0.9, title="Legenda")
+@
+
+<<wsk_zew_cd2, echo=FALSE, eval=TRUE>>=
+plot(c(2:6), c(folk.mal2kmeans, folk.mal3kmeans, folk.mal4kmeans, folk.mal5kmeans, folk.mal6kmeans), type='b', lwd=2, col="hotpink4", main="folk.mal", pch=8, ylim=c(0.45, 0.75), xlab="Liczba klastrÛw", ylab="folk.mal")
+lines(c(2:6), c(folk.mal2pam, folk.mal3pam, folk.mal4pam, folk.mal5pam, folk.mal6pam), type='b', lwd=2, col="pink", pch=9)
+lines(c(2:6), c(folk.mal2agnes, folk.mal3agnes, folk.mal4agnes, folk.mal5agnes, folk.mal6agnes), type='b', lwd=2, col="royalblue", pch=10)
+lines(c(2:6), c(folk.mal2diana, folk.mal3diana, folk.mal4diana, folk.mal5diana, folk.mal6diana), type='b', lwd=2, col="orchid", pch=11)
+legend("bottomleft", c("kmeans", "pam", "agnes", "diana"), col=c("hotpink4", "pink", "royalblue", "orchid"), pch=c(8,9,10,11), cex=0.9, title="Legenda")
 @
 
 
