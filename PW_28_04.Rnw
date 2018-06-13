@@ -243,7 +243,7 @@ Projekt skupia siê na zagadnieniach klasyfikacji i analizy skupieñ na przyk³adzi
 \item SVM
 \item XGBoost
 \end{itemize}
-Do porównania skutecznoœci klasyfikacji wykorzystaliœmy wskaŸniki:
+W celu strojenia parametrów modeli wykorzystane zosta³y metody 'Grid search' i 'Random search'. Skutecznoœæ metod liczona by³a metod¹ walidacji krzy¿owej. Do porównania skutecznoœci klasyfikacji wykorzystaliœmy wskaŸniki:
 \begin{itemize}
 \item Skutecznoœæ (accuracy)
 \item ROC
@@ -454,13 +454,42 @@ Wykres krzywej ROC zaprezentowano poni¿ej.
 <<XGBoost_ROC, echo=FALSE, eval=TRUE, fig.cap="XGBoost: krzywa ROC">>=
 ROC(cv.xgboost$pred$data[,4],cv.xgboost$pred$data[,2])
 @
+\subsection{Sieci neuronowe}
+Ostatni¹ wœród metod klasyfikacji przedstawionych w projekcie s¹ sieci neuronowe. Charakteryzuj¹ siê one du¿¹ z³o¿onoœci¹ obliczeniow¹ i ma³¹ interpretowalnoœci¹, zazwyczaj jednak dobr¹ lub bardzo dobr¹ skutecznoœci¹.
+<<>>=
+nn_params <- makeParamSet(
+  makeIntegerParam("size", lower = 5, upper = 10),
+  makeNumericParam("decay", lower=0,upper=5)
+)
+control <- makeTuneControlRandom(maxit = 10)
+resample_desc <- makeResampleDesc("CV", iters = 3)
+nn_learner <- makeLearner("classif.nnet", predict.type = 'prob', trace=FALSE)
+tuned_params <- tuneParams(nn_learner, task = task,resampling = resample_desc,par.set = nn_params, control = control)
+nn_learner <- makeLearner("classif.nnet", predict.type = 'prob', par.vals = tuned_params$x)
+nn_learner<-setHyperPars(nn_learner,trace=FALSE)
+cv.nn <- crossval(learner = nn_learner, task = task, iters = 5, stratif=TRUE, measures = list(acc,mlr::auc,tpr,tnr), show.info = F)
 
+cv.nn$aggr
+@
+
+Zobaczmy jak dla optymalnych parametrów, tzn. \Sexpr{tuned_params$x$size} neuronów nasza sieæ sprawdzi siê na nowych danych.
+<<>>=
+mod <- train(nn_learner, task= task)
+test.pred<-predict(mod,newdata = test)
+nn.test.acc<-mean(test.pred$data[,1]==test.pred$data[,4])
+nn.test.acc
+@
+
+Wykres krzywej ROC zaprezentowano poni¿ej.
+<<echo=FALSE, eval=TRUE, fig.cap="XGBoost: krzywa ROC">>=
+ROC(cv.nn$pred$data[,4],cv.nn$pred$data[,2])
+@
 
 \subsection{Porównanie}
 <<porownanie_klasyf, echo=FALSE, eval=TRUE, results='asis', fig.cap="Skutecznoœæ metod klasyfikacji">>=
-wyniki<-rbind(cv.logistic$aggr,cv.lda$aggr,cv.bayes$aggr,cv.knn$aggr,cv.randForest$aggr,cv.svm$aggr,cv.xgboost$aggr)
+wyniki<-rbind(cv.logistic$aggr,cv.lda$aggr,cv.bayes$aggr,cv.knn$aggr,cv.randForest$aggr,cv.svm$aggr,cv.xgboost$aggr, cv.nn$aggr)
 wyniki<-as.data.frame(wyniki)
-rownames(wyniki)<-c('Regresja Logistyczna','LDA','Naiwny Bayes','kNN','Lasy Losowe','Maszyna Wektorów Noœnych','XGBoost')
+rownames(wyniki)<-c('Regresja Logistyczna','LDA','Naiwny Bayes','kNN','Lasy Losowe','Maszyna Wektorów Noœnych','XGBoost', 'Sieci neuronowe')
 colnames(wyniki)<-c('Skutecznoœæ','AUC', 'Czu³oœæ','Specyficznoœæ')
 xtab<-xtable(wyniki, caption = 'Porównanie skutecznoœci metod klasyfikacji dla danych "spam"')
 print(xtab)
@@ -474,10 +503,12 @@ pred.knn<-getRRPredictions(cv.knn)
 pred.randForest<-getRRPredictions(cv.randForest)
 pred.svm<-getRRPredictions(cv.svm)
 pred.xgboost<-getRRPredictions(cv.xgboost)
+pred.nn<-getRRPredictions(cv.nn)
+
 @
 Poni¿ej przedstawiono porównanie krzywych ROC dla wszystkich klasyfikatorów.
 <<por_ROC_klasyf, echo=FALSE, eval=TRUE, fig.width=8, fig.height=4.5, fig.cap="Porównanie krzywych ROC dla ró¿nych klasyfikatorów">>=
-df = generateThreshVsPerfData(list(lda = pred.lda, logistic=pred.logistic, bayes=pred.bayes,knn=pred.knn,randForest=pred.randForest,svm = pred.svm, xgboost = pred.xgboost), measures = list(fpr, tpr))
+df = generateThreshVsPerfData(list(lda = pred.lda, logistic=pred.logistic, bayes=pred.bayes,knn=pred.knn,randForest=pred.randForest,svm = pred.svm, xgboost = pred.xgboost, nnet = pred.nn), measures = list(fpr, tpr))
 ggplot(as.data.frame(df$data),aes(x=fpr,y=tpr, col=learner))+geom_line()
 @
 
@@ -729,11 +760,44 @@ ROC(cv.xgboost$pred$data[,4],cv.xgboost$pred$data[,2])
 plotLearnerPrediction(learner = xgboost.learner, task = task)
 @
 
+\subsection{Sieci neuronowe}
+
+<<>>=
+nn_params <- makeParamSet(
+  makeIntegerParam("size", lower = 5, upper = 10),
+  makeNumericParam("decay", lower=0,upper=5)
+)
+control <- makeTuneControlRandom(maxit = 10)
+resample_desc <- makeResampleDesc("CV", iters = 3)
+nn_learner <- makeLearner("classif.nnet", predict.type = 'prob', trace=FALSE)
+tuned_params <- tuneParams(nn_learner, task = task,resampling = resample_desc,par.set = nn_params, control = control)
+nn_learner <- makeLearner("classif.nnet", predict.type = 'prob', par.vals = tuned_params$x)
+nn_learner<-setHyperPars(nn_learner,trace=FALSE)
+cv.nn <- crossval(learner = nn_learner, task = task, iters = 5, stratif=TRUE, measures = list(acc,mlr::auc,tpr,tnr), show.info = F)
+
+cv.nn$aggr
+@
+
+
+<<>>=
+mod <- train(nn_learner, task= task)
+test.pred<-predict(mod,newdata = test)
+nn.test.acc<-mean(test.pred$data[,1]==test.pred$data[,4])
+nn.test.acc
+@
+
+<<XGBoost_ROC, echo=FALSE, eval=TRUE, fig.cap="XGBoost: krzywa ROC">>=
+ROC(cv.nn$pred$data[,4],cv.nn$pred$data[,2])
+@
+
+<<echo=FALSE, eval=TRUE, fig.cap="Klasyfikacja metod¹ SVM po PCA">>=
+plotLearnerPrediction(learner = nn_learner, task = task)
+@
 \subsection{Porównanie}
 <<red_por_klas, echo=FALSE, eval=TRUE, results='asis', fig.cap="Porównanie klasyfikatorów (po PCA)">>=
-wyniki<-rbind(cv.logistic$aggr,cv.lda$aggr,cv.bayes$aggr,cv.knn$aggr,cv.randForest$aggr,cv.svm$aggr,cv.xgboost$aggr)
+wyniki<-rbind(cv.logistic$aggr,cv.lda$aggr,cv.bayes$aggr,cv.knn$aggr,cv.randForest$aggr,cv.svm$aggr,cv.xgboost$aggr,cv.nn$aggr)
 wyniki<-as.data.frame(wyniki)
-rownames(wyniki)<-c('Regresja Logistyczna','LDA','Naiwny Bayes','kNN','Lasy Losowe','Maszyna Wektorów Noœnych','XGBoost')
+rownames(wyniki)<-c('Regresja Logistyczna','LDA','Naiwny Bayes','kNN','Lasy Losowe','Maszyna Wektorów Noœnych','XGBoost', 'Sieci neuronowe')
 colnames(wyniki)<-c('Skutecznoœæ','AUC','Czu³oœæ','Specyficznoœæ')
 xtab<-xtable(wyniki, caption = 'Porównanie skutecznoœci metod klasyfikacji dla sk³adowych g³ównych danych "spam" ')
 print(xtab)
@@ -747,10 +811,11 @@ pred.knn<-getRRPredictions(cv.knn)
 pred.randForest<-getRRPredictions(cv.randForest)
 pred.svm<-getRRPredictions(cv.svm)
 pred.xgboost<-getRRPredictions(cv.xgboost)
+pred.nn<-getRRPredictions(cv.nn)
 @
 Poni¿ej przedstawiono porównanie krzywych ROC dla wszystkich klasyfikatorów:
 <<red_por_roc, echo=FALSE, eval=TRUE, fig.cap="Porównanie krzywych ROC dla ró¿nych klasyfikatorów (po PCA)">>=
-df = generateThreshVsPerfData(list(lda = pred.lda, logistic=pred.logistic, bayes=pred.bayes,knn=pred.knn,randForest=pred.randForest,svm = pred.svm, xgboost=pred.xgboost), measures = list(fpr, tpr))
+df = generateThreshVsPerfData(list(lda = pred.lda, logistic=pred.logistic, bayes=pred.bayes,knn=pred.knn,randForest=pred.randForest,svm = pred.svm, xgboost=pred.xgboost, nnet = pred.nn), measures = list(fpr, tpr))
 ggplot(as.data.frame(df$data),aes(x=fpr,y=tpr, col=learner))+geom_line()
 @
 
