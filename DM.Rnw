@@ -1,0 +1,1876 @@
+\documentclass[12pt, a4paper]{article}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  % dodatkowe pakiety LaTeX'a
+\usepackage[OT4]{polski}
+\usepackage[cp1250]{inputenc}
+\usepackage[top=2.5cm, bottom=2.5cm, left=2cm, right=2cm]{geometry}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage[colorlinks=true, linkcolor=blue]{hyperref}
+\usepackage{animate}
+\newtheorem{theorem}{Twierdzenie}
+\usepackage{mathtools}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% ustawienia globalne
+<<ustawienia_globalne, echo=FALSE, warning=FALSE,results='hide',message=FALSE>>=
+library(knitr)
+library(xtable) #pakiet do tworzenia tabel w formacie LaTeX'a
+library(animation)
+library(ElemStatLearn)
+library(MASS)
+library(cluster)
+library(ggplot2)
+library(ROCR)
+library(stats)
+library(e1071)
+library(neuralnet)
+library(randomForest)
+library(mlr)
+library(kknn)
+library(corrgram)
+library(clValid)
+library(mclust)
+library(clv)
+opts_chunk$set(fig.path='figure/', fig.align='center', fig.pos='H',fig.width=5, fig.height=4,message=FALSE)
+# UWAGA: w razie potrzeby moøna zmieniaÊ te ustawienia w danym chunk'u!
+@
+  
+  
+  
+\begin{document}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% strona tytulowa
+\title{Filtrowanie spamu}
+\author{Adrian Bukowski  Anna Miko≥ajczyk}
+\maketitle
+\tableofcontents 
+
+\newpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% MULTIPLOT %%% dzia≥a jak par(mfrow=c(x,y)) dla ggplotÛw %%%
+%%% wywo≥anie: multiplot(wykres1, wykres2,. .. , wykresn, cols=liczba kolumn) %%%
+<<multiplot, echo=FALSE, eval=TRUE>>=
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  library(grid)
+
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+
+ if (numPlots==1) {
+    print(plots[[1]])
+
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{WstÍp oraz analiza opisowa}
+Przedmiotem naszych rozwaøaÒ sπ dane dotyczπce zawartoúci 4601 wiadomoúci e-mail. Celem analiz jest filtrowanie spamu, tzn. rozrÛønienie spamu od poøadanych wiadomoúci. Mamy do czynienia z 57 zmiennymi, spoúrÛd ktÛrych:
+\begin{itemize}
+\item 48 przyjmuje wartoúci od 0 do 100 i oznacza procentowy udzia≥ danego s≥owa w mailu (za s≥owo uznajemy dowolny ciπg liter i cyfr)
+\item 6 przyjmuje wartoúci od 0 do 100 i oznacza procentowy udzia≥ danego znaku w mailu 
+\item 1 przyjmuje wartoúci dodatnie i oznacza úredniπ d≥ugoúÊ nieprzerywanych ciπgÛw wielkich liter
+\item 1 przyjmuje wartoúci naturalne i oznacza d≥ugoúÊ najd≥uøszego nieprzerwanego ciπgu wielkich liter
+\item 1 przyjmuje wartoúci naturalne i oznacza ≥πczna iloúÊ wielkich liter w mailu
+\end{itemize}
+OprÛcz tego dane zawierajπ kolumnÍ spam/mail oznaczajπcπ czy dany mail jest spamem. Mamy wiÍc do czynienia z zadaniem klasyfikacji. Przyjrzyjmy siÍ danym.
+<<>>=
+data("spam")
+dim(spam)
+X<-spam[,1:(dim(spam)[2]-1)]
+y<-spam[,dim(spam)[2]]
+@
+Przed wykonaniem analiz sprawdziliúmy czy dane sπ dobrze wczytane, zmienne okaza≥y siÍ zgodne z opisem. Upewniliúmy siÍ rÛwnieø, øe nie wystÍpujπ brakujπce dane.
+<<czy_dobrze_wczytane, echo=FALSE, eval=FALSE>>=
+sapply(X,class)
+@
+
+<<brakujace_dane, echo=FALSE, eval=FALSE>>=
+sum(is.na(X))
+@
+Na poczπtku analiz przyjrzeliúmy siÍ poszczegÛlnym zmiennym, wyznaczajπc podstawowe statystyki opisowe (w zwiπzku z duøπ iloúciπ zmiennych nie umieszczamy ich w raporcie) i kowariancje pomiÍdzy nimi (prezentujemy wynik w postaci tzw. heatmap, czyli mapy ciep≥a).
+<<pods_statystyki, echo=FALSE, eval=FALSE>>=
+summary(X)
+@
+
+Na poczπtku analiz przyjrzeliúmy siÍ poszczegÛlnym zmiennym, wyznaczajπc podstawowe statystyki opisowe (w zwiπzku z duøπ iloúciπ zmiennych nie umieszczamy ich w raporcie) i korelacje pomiÍdzy nimi. Najpierw na zbiorze wszystkich zmiennych, jednak tak duøy wykres korelacji okaza≥ siÍ byÊ bardzo nieczytelny, dlatego teø zrobiliúmy trzy osobne zestawienia dotyczπce 3 podgrup, kierujπc siÍ opisem poszczegÛlnych zmiennych. Na poniøszych wykresach im g≥Íbszy kolor, tym silniejsza korelacja miÍdzy zmiennymi.
+<<korelogramy, echo=FALSE, eval=TRUE, fig.height=6, fig.width=6, fig.cap="Korrelogram dla zmiennych zwiπzanych z wystÍpowaniem s≥Ûw">>=
+par(mfrow=c(2,1))
+corrgram(X[,1:24], order=FALSE, lower.panel=panel.shade,
+         upper.panel=panel.pie, text.panel=panel.txt)
+@
+
+<<korel2, echo=FALSE, eval=TRUE, fig.height=6, fig.width=6, fig.cap="Korrelogram dla zmiennych zwiπzanych z wystÍpowaniem s≥Ûw C.D.">>=
+corrgram(X[,25:48], order=FALSE, lower.panel=panel.shade,
+         upper.panel=panel.pie, text.panel=panel.txt)
+@
+
+<<corelogramy2, echo=FALSE, eval=TRUE, fig.height=6, fig.width=6, fig.cap="Korrelogram zmiennych zwiπzanych z wystÍpowaniem znakÛw i wielkich liter">>=
+corrgram(X[,49:57], order=FALSE, lower.panel=panel.shade,
+         upper.panel=panel.pie, text.panel=panel.txt)
+@
+Analiza wieloczynnikowa pokazuje, øe prawie øadne zmienne nie sπ ze sobπ skorelowane. Pojawiajπ siÍ jednak pary, jak na przyk≥ad A34 i A32, dla ktÛrych korelacja przekracza nawet $75\%$. Zweryfikowaliúmy czy usuniÍcie tych pojedynczych zmiennych wp≥ywa istotnie na wyniki. Poniewaø nie zaobserwowaliúmy poprawy, postanowiliúmy analizowaÊ kompletny zbiÛr danych "spam". 
+
+NastÍpnie skupiliúmy sie na zmiennej objaúnianej
+<<zm_objasniajaca, echo=TRUE, eval=TRUE>>=
+class(y)
+levels(y)
+@
+Jest to zmienna typu "factor" o dwÛch poziomach - "email" i "spam".
+
+W kolejnym kroku, zbadaliúmy jak dzielπ siÍ dane, ktÛrymi dysponujemy, ze wzglÍdu na zmiennπ objaúnianπ. Rozk≥ad moøemy obserwowaÊ na poniøszym wykresie s≥upkowym.
+<<podzial_wzgl_y, echo=FALSE, eval=TRUE, fig.cap="Rozk≥ad wiadomoúci na spam i poøπdane e-maile">>=
+tab<-table(y)
+tab
+as.matrix(tab)
+data<-as.data.frame(tab)
+colnames(data)<-c('type','freq')
+ggplot(data, aes(x=as.factor(type), y=freq,fill=as.factor(type)))+geom_bar(stat = "identity")+ labs(x="", y='Ilosc') + theme(legend.position="none")
+prop.table(tab)
+@
+Okaza≥o siÍ, øe oko≥o 60\% obserwacji stanowiπ poøπdane e-maile, a 40\% spam. 
+
+Posi≥kujπc siÍ dokumentacjπ danych, aby nasze analizy by≥y bardziej úwiadome, dodaliúmy nazwy kolumn. 
+<<nazwy_kolumn, echo=FALSE, eval=TRUE>>=
+spamColNames <- c("word_freq_make", "word_freq_address", "word_freq_all", "word_freq_3d", 
+    "word_freq_our", "word_freq_over", "word_freq_remove", "word_freq_internet", 
+    "word_freq_order", "word_freq_mail", "word_freq_receive", "word_freq_will", 
+    "word_freq_people", "word_freq_report", "word_freq_addresses", "word_freq_free", 
+    "word_freq_business", "word_freq_email", "word_freq_you", "word_freq_credit", 
+    "word_freq_your", "word_freq_font", "word_freq_000", "word_freq_money", 
+    "word_freq_hp", "word_freq_hpl", "word_freq_george", "word_freq_650", "word_freq_lab", 
+    "word_freq_labs", "word_freq_telnet", "word_freq_857", "word_freq_data", 
+    "word_freq_415", "word_freq_85", "word_freq_technology", "word_freq_1999", 
+    "word_freq_parts", "word_freq_pm", "word_freq_direct", "word_freq_cs", "word_freq_meeting", 
+    "word_freq_original", "word_freq_project", "word_freq_re", "word_freq_edu", 
+    "word_freq_table", "word_freq_conference", "char_freq_ch;", "char_freq_ch(", 
+    "char_freq_ch[", "char_freq_ch!", "char_freq_ch$", "char_freq_ch#", "capital_run_length_average", 
+    "capital_run_length_longest", "capital_run_length_total")
+colnames(X)<-spamColNames
+@
+W celu wy≥apania rÛønic pomiÍdzy obserwacjami ktÛre sπ spamem, a tymi ktÛre nie sπ, podzieliliúmy ca≥π prÛbkÍ na dwie roz≥πczne. Chcieliúmy rÛwnieø sprawdziÊ czym wyrÛøniajπ siÍ wiadomoúci bÍdπce spamem, a czym pozosta≥e.
+Poniøsze wykresy przedstawiajπ, ktÛre s≥owa pojawiajπ siÍ z najwiÍkszπ úredniπ czÍstotliwoúciπ we wspomnianych grupach.
+<<slowa_podzial, echo=FALSE, eval=TRUE, fig.height=4.5, fig.width=8, fig.cap="NajwiÍksze úrednie czÍstotliwoúci pojawiania siÍ s≥Ûw wúrÛd spamu i wiadomoúci poøπdanych">>=
+X.spam<-X[y=='spam',1:48]
+X.email<-X[y=='email',1:48]
+avg.X.spam <- sort(sapply(X.spam,mean),decreasing = TRUE)
+avg.X.email <- sort(sapply(X.email, mean),decreasing = TRUE)
+avg.X.spam<-as.data.frame(avg.X.spam[1:10])
+colnames(avg.X.spam)<-'avg_word_freq'
+avg.X.email<-as.data.frame(avg.X.email[1:10])
+colnames(avg.X.email)<-'avg_word_freq'
+w1_spam <- ggplot(avg.X.spam, aes(x=reorder(rownames(avg.X.spam),-avg_word_freq),y=avg_word_freq))+geom_bar(stat = "identity")+ theme(axis.text.x = element_text(angle = 45, hjust = 1)) +ggtitle("Spam")
+w2_email <- ggplot(avg.X.email, aes(x=reorder(rownames(avg.X.email),-avg_word_freq),y=avg_word_freq))+geom_bar(stat = "identity")+ theme(axis.text.x = element_text(angle = 45, hjust = 1)) +ggtitle("E-mail")
+multiplot(w1_spam, w2_email, cols=2)
+@
+£atwo zauwaøyÊ, øe najczÍúciej mamy do czynienia ze s≥owem "you", jednak wystepuje ono w obu grupach, zatem prawdopodobnie, nie rÛønicuje ich we w≥aúciwy sposÛb. Drugie w kolejnoúci, jeúli chodzi o úredni procentowy udzia≥ s≥owa we wiadomoúci, w przypadku spamu, jest s≥owo "your", a w przypadku e-maili s≥owa "George" i "hp".
+Z kolejnych wykresÛw, moøemy odczytaÊ jakie znaki stanowiπ úrednio najwiÍkszy procentowy udzia≥ w wiadomoúci, w przypadkach spamu i zwyk≥ych e-maili.
+<<znaki_podzial, echo=FALSE, eval=TRUE, fig.height=4.5, fig.width=6, fig.cap="NajwiÍksze úrednie czÍstotliwoúci pojawiania siÍ znakÛw w spamie i poøπdanych wiadomoúciach">>=
+X.spam<-X[y=='spam', 49:54]
+X.email<-X[y=='email', 49:54]
+X.spam <- sort(sapply(X.spam, mean),decreasing = TRUE)
+X.email <- sort(sapply(X.email, mean),decreasing = TRUE)
+X.spam <- cbind(X.spam,'spam')
+X.email <- cbind(X.email,'email')
+colnames(X.spam) <- c('avg.char.freq','type')
+colnames(X.email) <- c('avg.char.freq','type')
+X.char.freq <- rbind(X.spam,X.email)
+X.char.freq <- cbind(rownames(X.char.freq),X.char.freq)
+colnames(X.char.freq) <- c('char', 'avg.char.freq', 'type')
+X.char.freq <- as.data.frame(X.char.freq) 
+ggplot(X.char.freq, aes(x=as.factor(char), y = avg.char.freq, fill=type)) + 
+  geom_bar(stat = "identity",position = "dodge") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+@
+Widzimy, øe úrednio w spamie, wiÍkszy procentowy udzia≥ majπ znaki !, \#, \$, a w e-mailach ), ], ;. Moøna przypuszczaÊ, øe wystÍpowanie znakÛw \$ i ] jest istotne w rozpoznawaniu spamu, poniewaø w ich przypadku obserwujemy najwiÍkszπ rÛønicÍ pomiÍdzy úrednim procentowym udzia≥em w spamie i w e-mailu.
+KoÒczπc wstÍpne analizy, zajÍliúmy siÍ jeszcze 3 ostatnimi zmiennymi, czyli úredniπ d≥ugoúciπ nieprzerwanych ciπgÛw wielkich liter, d≥ugoúciπ najd≥uøszego nieprzerywanego ciπgu wielkich liter oraz ≥πcznπ iloúciπ wielkich liter w mailu.
+<<wielkie_litery_podzial, echo=FALSE, eval=TRUE, fig.height=3, fig.width=8, fig.cap="Analiza wielkich liter w spamie i w poøπdanych wiadomoúciach", warning=FALSE>>=
+par(mfrow=c(1,3))
+col.55<-as.data.frame(as.matrix(by(X[,55],y,mean)))
+col.56<-as.data.frame(as.matrix(by(X[,56],y,mean)))
+col.57<-as.data.frame(as.matrix(by(X[,57],y,mean)))
+w1<-ggplot(col.55, aes(x=rownames(col.55),y=V1,fill=rownames(col.55)))+geom_bar(stat='identity') + theme(legend.position="none") + ggtitle("Sr. dl. ciagu wlk. liter")
+w2<-ggplot(col.56, aes(x=rownames(col.56),y=V1,fill=rownames(col.56)))+geom_bar(stat='identity') + theme(legend.position="none") + ggtitle("Najdluzszy ciag wlk. liter")
+w3<-ggplot(col.57, aes(x=rownames(col.57),y=V1,fill=rownames(col.57)))+geom_bar(stat='identity') + theme(legend.position="none") + ggtitle("Laczna ilosc")
+multiplot(w1,w2,w3, cols=3)
+@
+Powyøsze wykresy sugerujπ, øe wielkie litery znacznie wiÍkszπ rolÍ odgrywajπ w spamie. Przyjrzyjmy siÍ histogramom czÍstoúci wystÍpowania niektÛrych s≥Ûw:
+<<fig.height=4,fig.width=8, fig.cap="Rozk≥ad przyk≥adowych zmiennych">>=
+q1<-qplot(X$word_freq_you, geom="histogram") +
+    xlab("Procentowy udzia≥ s≥owa 'you' w mailu")
+q2<-qplot(X$word_freq_will, geom="histogram")+
+    xlab("Procentowy udzia≥ s≥owa 'will' w mailu")
+multiplot( q1,q2, cols=2)
+@
+Charakter rozk≥adÛw jest dyskretno-ciπg≥y z atomem w 0. Dodatkowo dane nie przypominajπ rozk≥adu normalnego i sπ ciÍøkoogonowe. Warto zatem rozwaøyÊ transformacjÍ logarytmicznπ. Ze wzglÍdu na wspomniane wartoúci zerowe rozwaøymy jednak transformacjÍ $\log (x+0.1)$.
+<<fig.height=4,fig.width=8, fig.cap="Rozk≥ad przyk≥adowych zmiennych po transformacji">>=
+q1<-qplot(log(X$word_freq_you+0.1), geom="histogram") +
+    xlab("Logarytm z procentowego udzia≥u s≥owa 'you' w mailu")
+q2<-qplot(log(X$word_freq_will+0.1), geom="histogram") +
+    xlab("Logarytm z procentowego udzia≥u s≥owa 'will' w mailu")
+multiplot( q1,q2, cols=2)
+@
+Oczywiúcie dalej mamy do czynienia z atomem w punkcie $\log (0.1)$, jednak pozosta≥e dane duøo bardziej przypominajπ rozk≥ad normalny. TransformacjÍ zastosujemy do metod LDA i LR (w pozosta≥ych metodach pogorsza≥a ona wyniki).
+Po wstÍpnej analizie przechodzimy do bardziej z≥oøonych rozwaøaÒ zwiπzanych z postawionym problemem.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Metody}
+Projekt skupia siÍ na zagadnieniach klasyfikacji i analizy skupieÒ na przyk≥adzie zbioru danych "spam". Celem projektu jest porÛwnanie skutecznoúci metod klasyfikacji oraz jakoúci metod analizy skupieÒ. W raporcie rozpatrzyliúmy te same metody z uwzglÍdnieniem redukcji wymiaru za pomocπ metody PCA. W przypadku klasyfikacji wykorzystaliúmy nastÍpujπce metody:
+\begin{itemize}
+\item Regresja Logistyczna
+\item LDA 
+\item Klasyfikator Naiwny Bayesa
+\item Metoda k Najbliøszych SπsiadÛw
+\item Lasy Losowe
+\item SVM
+\item XGBoost
+\end{itemize}
+Do porÛwnania skutecznoúci klasyfikacji wykorzystaliúmy wskaüniki:
+\begin{itemize}
+\item SkutecznoúÊ (accuracy)
+\item ROC
+\item AUC
+\item Czu≥oúÊ 
+\item SpecyficznoúÊ
+\end{itemize}
+Do analizy skupieÒ zastosowaliúmy:
+\begin{itemize}
+\item k-Means
+\item PAM
+\item AGNES
+\item DIANA
+\end{itemize}
+Do analizy jakoúci grupowania wykorzystaliúmy wskaüniki zarÛwno wewnÍtrzne jak i zewnÍtrzne: 
+\begin{itemize}
+\item Silhouette
+\item wskaünik Dunn'a
+\item wskaünik Randa
+\item wskaünik Jaccarda
+\item wskaünik Fowlkesa-Mallowsa 
+\end{itemize}
+
+
+\section{Klasyfikacja}
+Zajmiemy siÍ teraz zagadnieniem klasyfikacji. Wykorzystamy pakiet mlr, ktÛry umoøliwia zastosowanie rÛønych metod w szybki sposÛb. Zaczynamy od stworzenia zadania klasyfikacji. Dostrajanie parametrÛW i badanie skutecznoúci zostanie wykonane za pomocπ walidacji krzyøowej na 80\% danych, a nastÍpnie na pozosta≥ych 20\% sprawdzimy uzyskanπ skutecznoúÊ.
+<<zad_klasyf, echo=TRUE, eval=TRUE>>=
+spam.log<-spam
+spam.log[,-dim(spam)[2]]<-log(spam[,-dim(spam)[2]]+0.1)
+smp<- sample(dim(spam)[1],dim(spam)[1]*0.2)
+test.log<- spam.log[smp,]
+train.log<-spam.log[-smp,]
+test <-spam[smp,]
+train<-spam[-smp,]
+task.log <- makeClassifTask(data = train.log, target = "spam")
+task<-makeClassifTask(data=train, target = "spam")
+data("spam")
+@
+W kolejnym roku napisaliúmy funkcjÍ do rysowania krzywej ROC.
+<<roc, echo=TRUE, eval=TRUE>>=
+ROC<-function(pred.prob,true.labels){
+  pred.ROCR <- ROCR::prediction(pred.prob, true.labels)
+  perf.ROCR <- ROCR::performance(pred.ROCR, "tpr", "fpr")
+  plot(perf.ROCR, print.cutoffs.at=seq(0.1,1,0.1), colorize=TRUE, lwd=2)
+}
+@
+W kolejnych podrozdzia≥ach wyznaczymy klasyfikatory za pomocπ regresji logistycznej (RL), LDA, klasyfikatora Naiwnego Bayes'a, metody kNN, lasÛw losowych, SVM oraz XGBoost. Dla wszystkich klasyfikatorÛw zastosowana zostanie walidacja krzyøowa z 5 podzbiorami. W celu porÛwnania dopasowania porÛwnamy dok≥adnoúÊ i AUC.
+
+\subsection{Regresja Logistyczna}
+Zaczynamy od  jednej z najpopularniejszych metod klasyfikacji, czyli regresji logistycznej. Wykorzystamy dane po przekszta≥ceniu.
+<<RL, echo=TRUE, eval=TRUE, warning=FALSE>>=
+logistic.learner <- makeLearner("classif.logreg",predict.type = "prob")
+cv.logistic <- crossval(learner = logistic.learner, task = task.log, iters = 5,
+                        stratif=TRUE, measures = list(acc,mlr::auc,tpr,tnr), 
+                        show.info = F)
+cv.logistic$aggr
+@
+Jak widaÊ juø zwyk≥a regresja logistyczna dobrze odrÛønia nasze dane - dok≥adnoúÊ wynosi prawie 94\%. Po rozwaøeniu wszystkich metod, przedstawimy dla nich krzywe ROC na jednym wykresie.
+<<RL_ROC, echo=FALSE, eval=FALSE, fig.cap="Regresja logistyczna: krzywa ROC">>=
+ROC(cv.logistic$pred$data[,4],cv.logistic$pred$data[,2])
+@
+
+\subsection{LDA}
+Kolejnym klasyfikator otrzymamy za pomocπ metody LDA. Podobnie jak w regresjii logistycznej wykorzystamy dane po przekszta≥ceniu.
+<<LDA, echo=TRUE, eval=TRUE>>=
+lda.learner <- makeLearner("classif.lda",predict.type = "prob")
+cv.lda <- crossval(learner = lda.learner, task = task.log, iters = 5, 
+                   stratif=TRUE, measures = list(acc,mlr::auc,tpr,tnr), 
+                   show.info = F)
+cv.lda$aggr
+@
+Otrzymujemy niewiele gorszy wynik niø przy uøyciu regresji logistycznej.
+<<LDA_ROC, echo=FALSE, eval=FALSE, fig.cap="LDA: krzywa ROC">>=
+ROC(cv.lda$pred$data[,4],cv.lda$pred$data[,2])
+@
+
+\subsection{Klasyfikator Naiwny Baysa}
+NastÍpnym klasyfikatorem bÍdzie klasyfikator naiwny Bayesa.
+<<kNB, echo=TRUE, eval=TRUE>>=
+bayes.learner <- makeLearner("classif.naiveBayes", predict.type = 'prob')
+cv.bayes <- crossval(learner = bayes.learner, task = task, iters = 5,
+                     stratif=TRUE, measures = list(acc,mlr::auc,tpr,tnr), 
+                     show.info = F)
+cv.bayes$aggr
+@
+Klasyfikator Bayesa poradzi≥ sobie z tym zadaniem najgorzej z dotychczasowych klasyfikatorÛw.
+
+<<kNB_ROC, echo=FALSE, eval=FALSE, fig.cap="Naiwny klasyfikator Bayes'a: krzywa ROC">>=
+ROC(cv.bayes$pred$data[,4],cv.bayes$pred$data[,2])
+@
+
+\subsection{Metoda k-Najbliøszych SπsiadÛw}
+Metoda k-Najbliøszych SπsiadÛw jest nastÍpnπ z rozwaøanych metod. W celu doboru liczby sπsiadÛw wykorzystamy metodÍ 'Grid search' na siatce od 1 do 10 sπsiadÛw.
+<<kNN, echo=TRUE, eval=TRUE>>=
+knn_params <- makeParamSet(
+  makeDiscreteParam("k", values = c(1,2,3,4,5,6,7,8,9,10))
+)
+ctrl = makeTuneControlGrid()
+rdesc = makeResampleDesc("CV", iters = 3L)
+tuned_params = tuneParams("classif.kknn", task = task, resampling = rdesc,
+  par.set = knn_params, control = ctrl)
+knn.learner <- makeLearner("classif.kknn", predict.type = 'prob', 
+                           par.vals = tuned_params$x)
+cv.knn <- crossval(learner = knn.learner, task = task, iters = 5, 
+                   stratif=TRUE, measures = list(acc,mlr::auc,tpr,tnr), 
+                   show.info = F)
+cv.knn$aggr
+@
+Algorytm wybra≥ model z \Sexpr{tuned_params$x$k} sπsiadami. Uzyskuje ona dok≥adnoúÊ na poziomie nieca≥ych 92\%, zatem wynik niewiele gorszy od regresji logistycznej. Poniewaø wykorzystaliúmy te same dane do strojenia parametru oraz ewaluacji modelu, powinniúmy zatem sprawdziÊ jeszcze jak model radzi sobie na nowych danych (najlepiej wykorzystujπc walidacjÍ krzyøowπ), poniewaø jednak 'podwÛjna' walidacja krzyøowa jest bardzo kosztowna obliczeniowo (zw≥aszcza dla metod typu lasy losowe/xgboost/sieci neuronowe), zatem dla metody kNN jak i nastÍpnych sprawdzimy skutecznoúÊ na jednym zbiorze testowym.  
+Wynik na zbiorze testowym:
+<<echo=FALSE>>=
+mod <- train(knn.learner, task= task)
+test.pred<-predict(mod,newdata = test)
+knn.test.acc<-mean(test.pred$data[,1]==test.pred$data[,4])
+knn.test.acc
+@
+
+Jest on podobny do wyniku uzyskanego metodπ walidacji krzyøowej na zbiorze treningowym, co czyni model wiarygodnym.
+<<kNN_ROC, echo=FALSE, eval=FALSE, fig.cap="k-NN: krzywa ROC">>=
+ROC(cv.knn$pred$data[,4],cv.knn$pred$data[,2])
+@
+
+
+\subsection{Lasy losowe}
+Przyjrzyjmy siÍ rÛwnieø  klasyfikacji za pomocπ lasÛw losowych. W celu doboru parametrÛw: liczby drzew, liczby zmiennych branych pod uwagÍ przy kaødym podziale, maksymalnej liczby liúci i minimalnej liczby zmiennych w liúciu, wykorzystamy metodÍ 'Random search' z odpowiednimi przedzia≥ami poczπtkowymi. 
+<<LL, echo=TRUE, eval=TRUE>>=
+randForest_params <- makeParamSet(
+  makeIntegerParam("ntree", lower = 100, upper = 500),
+  makeIntegerParam("mtry", lower = 1, upper = 10),
+  makeIntegerParam("maxnodes", lower = 5, upper = 50),
+  makeIntegerParam("nodesize", lower = 1, upper = 15)
+)
+ctrl = makeTuneControlRandom(maxit = 10)
+rdesc = makeResampleDesc("CV", iters = 3L)
+tuned_params = tuneParams("classif.randomForest", task = task, 
+                          resampling = rdesc, par.set = randForest_params, 
+                          control = ctrl)
+
+randForest.learner <- makeLearner("classif.randomForest", 
+                                  predict.type = 'prob', 
+                                  par.vals = tuned_params$x)
+cv.randForest <- crossval(learner = randForest.learner, task = task, iters = 5,
+                          stratif=TRUE, measures = list(acc,mlr::auc,tpr,tnr), 
+                          show.info = F)
+cv.randForest$aggr
+@
+Po wybraniu odpowiednich parametrÛw model uzyska≥ skutecznoúÊ ponad 93\%. Zobaczmy jak wyglπda wynik na zbiorze testowym:
+<<>>=
+mod <- train(randForest.learner, task= task)
+test.pred<-predict(mod,newdata = test)
+randForest.test.acc<-mean(test.pred$data[,1]==test.pred$data[,4])
+randForest.test.acc
+@
+Wynik na zbiorze testowym wynosi \Sexpr{randForest.test.acc}, zatem jest on podobny jak w zbiorze treningowym. Poniøej przedstawiono wykres krzywej ROC.
+<<LL_ROC, echo=FALSE, eval=FALSE, fig.cap="Lasy losowe: krzywa ROC">>=
+ROC(cv.randForest$pred$data[,4],cv.randForest$pred$data[,2])
+@
+
+\subsection{Maszyna wektorÛw noúnych}
+Kolejnym z rozwaøanych klasyfikatorÛw jest SVM z jπdrem gaussowskim. W celu odpowiedniego dobrania parametrÛw $C$ i $\gamma$ zastosujemy metodÍ 'Random search', czyli losowe przeszukiwanie w ktÛrym podajemy odpowiedni zakres do przeszukania. 
+<<SVM, echo=TRUE, eval=TRUE>>=
+svm_params <- makeParamSet(
+  makeNumericParam("C", lower = -1, upper = 10, trafo = function(x) 2^x),
+  makeNumericParam("epsilon", lower = -1, upper = 10, trafo = function(x) 2^x)
+)
+ctrl = makeTuneControlRandom(maxit = 10)
+rdesc = makeResampleDesc("CV", iters = 3L)
+tuned_params = tuneParams("classif.ksvm", task = task, resampling = rdesc,
+  par.set = svm_params, control = ctrl)
+svm.learner <- setHyperPars(makeLearner("classif.ksvm", predict.type = 'prob'), 
+                            par.vals = tuned_params$x)
+cv.svm <- crossval(learner = svm.learner, task = task, iters = 5,
+                   stratif=TRUE, measures = list(acc,mlr::auc,tpr,tnr), 
+                   show.info = F)
+cv.svm$aggr
+@
+Otrzymaliúmy wynik ponad 93\%. Dla parametrÛw $C$ i $\gamma$ odpowiednio \Sexpr{tuned_params$x$C} i \Sexpr{tuned_params$x$epsilon}. Zobaczmy jaki wynik otrzymamy na zbiorze testowym:
+<<>>=
+mod <- train(svm.learner, task= task)
+test.pred<-predict(mod,newdata = test)
+svm.test.acc<-mean(test.pred$data[,1]==test.pred$data[,4])
+svm.test.acc
+@
+
+<<SVM_ROC, echo=FALSE, eval=FALSE, fig.cap="SVM: krzywa ROC">>=
+ROC(cv.svm$pred$data[,4],cv.svm$pred$data[,2])
+@
+
+\subsection{XGBoost}
+Jednym z najskuteczniejszych algorytmÛw, wygrywajπcych w konkursach pozyskiwania wiedzy na stronach typu Kaggle jest znany algorytm XGBoost (eXtreme Gradient Boosting). Jest to przyk≥ad algorytmu wykorzystujπcego boosting. Algorytm ze wzglÍdu na z≥oøonoúÊ posiada wiele hiperparametrÛw, ktÛre wybierzemy metodπ 'Random search' podajπc tylko granice poszukiwaÒ.
+
+<<>>=
+xgb_params <- makeParamSet(
+  makeIntegerParam("nrounds", lower = 100, upper = 500),
+  makeIntegerParam("max_depth", lower = 1, upper = 10),
+  makeNumericParam("eta", lower = .1, upper = .5),
+  makeNumericParam("lambda", lower = -1, upper = 0, trafo = function(x) 10^x)
+)
+control <- makeTuneControlRandom(maxit = 10)
+resample_desc <- makeResampleDesc("CV", iters = 3)
+tuned_params <- tuneParams('classif.xgboost', task = task,
+                           resampling = resample_desc,par.set = xgb_params,
+control = control)
+xgboost.learner <- makeLearner("classif.xgboost", predict.type = 'prob', 
+                               par.vals = tuned_params$x)
+cv.xgboost <- crossval(learner = xgboost.learner, task = task, iters = 5,
+                          stratif=TRUE, measures = list(acc,mlr::auc,tpr,tnr), 
+                       show.info = F)
+cv.xgboost$aggr
+@
+Jeden z obecnie najskuteczniejszych algorytmÛw, podobnie na tym zbiorze uzyska≥ bardzo dobry wynik ponad 95\%. Zobaczmy jaki wynik uzyska≥ na zbiorze testowym.
+<<>>=
+mod <- train(xgboost.learner, task= task)
+test.pred<-predict(mod,newdata = test)
+xgboost.test.acc<-mean(test.pred$data[,1]==test.pred$data[,4])
+xgboost.test.acc
+@
+
+<<XGBoost_ROC, echo=FALSE, eval=FALSE, fig.cap="XGBoost: krzywa ROC">>=
+ROC(cv.xgboost$pred$data[,4],cv.xgboost$pred$data[,2])
+@
+\subsection{Sieci neuronowe}
+Ostatniπ wúrÛd metod klasyfikacji przedstawionych w projekcie sπ sieci neuronowe. Charakteryzujπ siÍ one duøπ z≥oøonoúciπ obliczeniowπ i ma≥π interpretowalnoúciπ, zazwyczaj jednak dobrπ lub bardzo dobrπ skutecznoúciπ.
+<<>>=
+nn_params <- makeParamSet(
+  makeIntegerParam("size", lower = 5, upper = 10),
+  makeNumericParam("decay", lower=0,upper=5)
+)
+control <- makeTuneControlRandom(maxit = 10)
+resample_desc <- makeResampleDesc("CV", iters = 3)
+nn_learner <- makeLearner("classif.nnet", predict.type = 'prob', trace=FALSE)
+tuned_params <- tuneParams(nn_learner, task = task,resampling = resample_desc,par.set = nn_params, control = control)
+nn_learner <- makeLearner("classif.nnet", predict.type = 'prob', par.vals = tuned_params$x)
+nn_learner<-setHyperPars(nn_learner,trace=FALSE)
+cv.nn <- crossval(learner = nn_learner, task = task, iters = 5, stratif=TRUE, measures = list(acc,mlr::auc,tpr,tnr), show.info = F)
+
+cv.nn$aggr
+@
+
+Zobaczmy jak dla optymalnych parametrÛw, tzn. \Sexpr{tuned_params$x$size} neuronÛw nasza sieÊ sprawdzi siÍ na nowych danych.
+<<>>=
+mod <- train(nn_learner, task= task)
+test.pred<-predict(mod,newdata = test)
+nn.test.acc<-mean(test.pred$data[,1]==test.pred$data[,4])
+nn.test.acc
+@
+
+
+
+\subsection{PorÛwnanie}
+<<porownanie_klasyf, echo=FALSE, eval=TRUE, results='asis', fig.cap="SkutecznoúÊ metod klasyfikacji">>=
+wyniki<-rbind(cv.logistic$aggr,cv.lda$aggr,cv.bayes$aggr,cv.knn$aggr,cv.randForest$aggr,cv.svm$aggr,cv.xgboost$aggr,cv.nn$aggr)
+wyniki<-as.data.frame(wyniki)
+rownames(wyniki)<-c('Regresja Logistyczna','LDA','Naiwny Bayes','kNN','Lasy Losowe','Maszyna WektorÛw Noúnych','XGBoost','Sieci neuronowe')
+colnames(wyniki)<-c('SkutecznoúÊ','AUC', 'Czu≥oúÊ','SpecyficznoúÊ')
+xtab<-xtable(wyniki, caption = 'PorÛwnanie skutecznoúci metod klasyfikacji dla danych "spam"')
+print(xtab)
+@
+Najskuteczniejszπ metodπ okaza≥ siÍ XGBoost, jednak znacznie prostsze metody takie jak regresja logistyczna, ktÛra ponadto umoøliwia interpretacjÍ modelu, dajπ niemaløe identyczne wyniki. Najmniej skutecznπ metodπ jest klasyfikator naiwny Bayesa. 
+<<roc_klasyf_razem, echo=FALSE, eval=TRUE>>=
+pred.logistic<-getRRPredictions(cv.logistic)
+pred.lda<-getRRPredictions(cv.lda)
+pred.bayes<-getRRPredictions(cv.bayes)
+pred.knn<-getRRPredictions(cv.knn)
+pred.randForest<-getRRPredictions(cv.randForest)
+pred.svm<-getRRPredictions(cv.svm)
+pred.xgboost<-getRRPredictions(cv.xgboost)
+pred.nn<-getRRPredictions(cv.nn)
+
+@
+Poniøej przedstawiono porÛwnanie krzywych ROC dla wszystkich klasyfikatorÛw.
+<<por_ROC_klasyf, echo=FALSE, eval=TRUE, fig.width=8, fig.height=4.5, fig.cap="PorÛwnanie krzywych ROC dla rÛønych klasyfikatorÛw">>=
+df = generateThreshVsPerfData(list(lda = pred.lda, logistic=pred.logistic, bayes=pred.bayes,knn=pred.knn,randForest=pred.randForest,svm = pred.svm, xgboost = pred.xgboost, nnet = pred.nn), measures = list(fpr, tpr))
+ggplot(as.data.frame(df$data),aes(x=fpr,y=tpr, col=learner))+geom_line()
+@
+
+\section{Redukcja wymiaru}
+Poniewaø dysponujemy danymi z 58 zmiennymi, konieczna wydaje siÍ byÊ redukcja wymiaru.
+
+\subsection{PCA}
+W tym celu wykorzystamy metodÍ PCA. Poniøej prezentujemy wykres osypiskowy i wykres skumulowanej wariancji, dziÍki ktÛrym moøemy zaobserwowaÊ jaki udzia≥ w wyjaúnianiu zmiennoúci, majπ kolejne sk≥adowe g≥Ûwne. 
+<<pca, echo=FALSE, eval=TRUE, fig.cap="Analiza zmiennoúci wyjaúnianej przez kolejne sk≥adowe g≥Ûwne", fig.width=8, fig.height=9>>=
+#redukcja wymiaru
+#pca
+n<-dim(spam)[1]
+spam.pca<-spam[,1:57]
+spam.po.pca <- prcomp(spam.pca, retx=T, center=T, scale.=T) 
+#print("Skladowe glowne:")
+#print(spam.po.pca$rotation[,10])
+#summary(spam.po.pca)
+
+#analiza zmiennoúci wyjaúnianej przez sk≥adowe g≥Ûwne
+wariancja <- ( spam.po.pca$sdev ^2)/sum(spam.po.pca$sdev^2) 
+avg_var<-mean(wariancja)
+#for(i in 1:57){
+ # if(wariancja[i] < avg_var)
+ # {print(i) 
+ #}
+#}
+wariancja.narast <- cumsum(wariancja)
+par(mfrow=c(2,1))
+barplot(wariancja, ylim=c(0, 0.12))
+abline(a=avg_var, b=0, col="red", lwd=2, lty=2)
+text(x=50, y=avg_var+0.002, label = "úrednia wariancja", col="red")
+barplot(wariancja.narast)
+abline(a=0.25, b=0, col="red", lwd=2, lty=2)
+text(x=2, y=0.27, label = "25%", col="red")
+abline(a=0.5, b=0, col="orange", lwd=2, lty=2)
+text(x=2, y=0.52, label = "50%", col="orange")
+abline(a=0.75, b=0, col="green", lwd=2, lty=2)
+text(x=2, y=0.77, label = "75%", col="green")
+par(mfrow=c(2,1))
+@
+Przy tak duøej iloúci zmiennych, stawianie sobie progu np. 90\% wyjaúnianej zmiennoúci, zaprowadzi≥o by nas do dalszego rozwaøanie niemaløe wszystkich zmiennych. Jednak nie taki by≥ nasz cel, musimy zatem w inny sposÛb ustaliÊ, ile sk≥adowych g≥Ûwnych braÊ pod uwagÍ. W tym celu wyznaczyliúmy wartoúÊ úredniπ wariancji i zaobserwowaliúmy, øe kaøda z 20 pierwszych sk≥adowych g≥Ûwnych, wyjaúnia wiÍcej niø úrednia wartoúÊ zmiennoúci. Jednak weryfikujπc ten wynik, wykorzystujπc ocenÍ wizualnπ, ≥atwo zauwaøyÊ, øe w przypadku sk≥adowych 12-20 jest to niewielka rÛønica, zatem rozsπdnym wyborem wydaje siÍ byÊ 11 sk≥adowych g≥Ûwnych.
+
+Pierwsze dwie sk≥adowe g≥Ûwne wyjaúniajπ zaledwie nieco ponad 17\% zmiennoúci. Poniøej prezentujemy wykres rozrzutu, w przestrzeni tych dwÛch sk≥adowych. 
+<<pca_PCA1_PCA2, echo=FALSE, eval=TRUE, fig.cap="Wykres rozrzutu w przestrzeni dwÛch pierwszych sk≥adowych g≥Ûwnych">>=
+#wizual.
+plot(spam.po.pca$x[,1], spam.po.pca$x[,2], col=as.factor(y))
+@
+
+
+
+\section{Klasyfikacja z redukcjπ wymiaru}
+SprÛbujmy teraz przeprowadziÊ podobnπ analizÍ z uprzednim zastosowaniem algorytmu PCA w celu redukcji wymiaru. Do dalszych analiz wybieramy 11 sk≥adowych g≥Ûwnych. PorÛwnamy wyniki wskaünikÛw takich jak w poprzednim roüdziale, to zanczy skutecznoúci, AUC, czu≥oúci i specyficznoúci. Po dobraniu parametrÛw do niektÛrych metod, sprawdzona zostanie skutecznoúÊ na zbiorze testowym w celu porÛwnania do zbioru treningowego. Dla kaødej metody zostanπ przedstawione graficznie granice podzia≥u dla pierwszych dwÛch sk≥adowych g≥Ûwnych.
+
+<<red_pca, echo=FALSE, eval=TRUE>>=
+X.pca <- prcomp(spam[,-dim(spam)[2]], retx = T)
+@
+
+<<red_pca2, echo=FALSE, eval=TRUE, warning=FALSE>>=
+data('spam')
+n<-11
+X<-X.pca$x[,1:n]
+spam.PCA<-cbind(X,spam$spam)
+spam.PCA<-as.data.frame(spam.PCA)
+colnames(spam.PCA)[dim(spam.PCA)[2]]<-'spam'
+spam.PCA$spam<-as.factor(spam.PCA$spam)
+levels(spam.PCA$spam)<-c('email','spam')
+@
+
+
+<<red_zad_klasyf, echo=TRUE, eval=TRUE>>=
+smp<- sample(dim(spam.PCA)[1],dim(spam.PCA)[1]*0.2)
+test <-spam.PCA[smp,]
+train<-spam.PCA[-smp,]
+task<-makeClassifTask(data=train, target = "spam")
+@
+
+\subsection{Regresja Logistyczna}
+<<red_RL, echo=FALSE, eval=TRUE, warning=FALSE>>=
+logistic.learner <- makeLearner("classif.logreg",predict.type = "prob")
+cv.logistic <- crossval(learner = logistic.learner, task = task, iters = 5,
+                        stratif=TRUE, measures = list(acc,mlr::auc,tpr,tnr), show.info = F)
+cv.logistic$aggr
+@
+
+<<red_RL_ROC, echo=FALSE, eval=FALSE, fig.cap="RL po PCA: krzywa ROC", warning=FALSE>>=
+ROC(cv.logistic$pred$data[,4],cv.logistic$pred$data[,2])
+@
+
+<<red_RL_klas, echo=FALSE, eval=TRUE, fig.cap="Klasyfikacja metodπ RL po PCA", warning=FALSE>>=
+plotLearnerPrediction(learner = logistic.learner, task = task)
+@
+
+\subsection{LDA}
+<<red_lda, echo=FALSE, eval=TRUE>>=
+lda.learner <- makeLearner("classif.lda",predict.type = "prob")
+cv.lda <- crossval(learner = lda.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,mlr::auc,tpr,tnr),show.info = F)
+cv.lda$aggr
+@
+
+<<red_lda_roc, echo=FALSE,eval=FALSE, fig.cap="LDA po PCA: krzywa ROC">>=
+ROC(cv.lda$pred$data[,4],cv.lda$pred$data[,2])
+@
+
+<<red_lda_klas, echo=FALSE, eval=TRUE, fig.cap="Klasyfikacja metodπ LDA po PCA">>=
+plotLearnerPrediction(learner = lda.learner, task = task)
+@
+
+\subsection{Klasyfikator Naiwny Bayesa}
+<<red_knb, echo=FALSE, eval=TRUE>>=
+bayes.learner <- makeLearner("classif.naiveBayes", predict.type = 'prob')
+cv.bayes <- crossval(learner = bayes.learner, task = task,iters = 5,stratif=TRUE,measures = list(acc,mlr::auc,tpr,tnr),show.info = F)
+cv.bayes$aggr
+@
+
+<<red_knb_roc, echo=FALSE, eval=FALSE, fig.cap="KNB po PCA: krzywa ROC">>=
+ROC(cv.bayes$pred$data[,4],cv.bayes$pred$data[,2])
+@
+
+<<red_knb_klas, echo=FALSE, eval=TRUE, fig.cap="Klasyfikator Naiwny Bayes'a po PCA">>=
+plotLearnerPrediction(learner = bayes.learner, task = task)
+@
+
+\subsection{Metoda k-Najbliøszych SπsiadÛw}
+<<red_knn, echo=FALSE, eval=TRUE>>=
+knn_params <- makeParamSet(
+  makeDiscreteParam("k", values = c(1,2,3,4,5,6,7,8,9,10))
+)
+ctrl = makeTuneControlGrid()
+rdesc = makeResampleDesc("CV", iters = 3L)
+tuned_params = tuneParams("classif.kknn", task = task, resampling = rdesc,
+  par.set = knn_params, control = ctrl)
+knn.learner <- makeLearner("classif.kknn", predict.type = 'prob', par.vals = tuned_params$x)
+cv.knn <- crossval(learner = knn.learner, task = task, iters = 5, 
+                   stratif=TRUE, measures = list(acc,mlr::auc,tpr,tnr), show.info = F)
+cv.knn$aggr
+@
+
+
+<<>>=
+mod <- train(knn.learner, task= task)
+test.pred<-predict(mod,newdata = test)
+knn.test.acc<-mean(test.pred$data[,1]==test.pred$data[,4])
+knn.test.acc
+@
+
+<<red_knn_roc, echo=FALSE, eval=FALSE, fig.cap="kNN po PCA: krzywa ROC">>=
+ROC(cv.knn$pred$data[,4],cv.knn$pred$data[,2])
+@
+
+<<red_knn_klas, echo=FALSE, eval=TRUE, fig.cap="Klasyfikacja metodπ kNN po PCA">>=
+plotLearnerPrediction(learner = knn.learner, task = task)
+@
+
+
+\subsection{Lasy losowe}
+<<red_LL, echo=FALSE, eval=TRUE, warning=FALSE>>=
+randForest_params <- makeParamSet(
+  makeIntegerParam("ntree", lower = 100, upper = 500),
+  makeIntegerParam("mtry", lower = 1, upper = 10),
+  makeIntegerParam("maxnodes", lower = 5, upper = 50),
+  makeIntegerParam("nodesize", lower = 1, upper = 15)
+)
+ctrl = makeTuneControlRandom(maxit = 10)
+rdesc = makeResampleDesc("CV", iters = 3L)
+tuned_params = tuneParams("classif.randomForest", task = task, resampling = rdesc,
+  par.set = randForest_params, control = ctrl)
+randForest.learner <- makeLearner("classif.randomForest", predict.type = 'prob', par.vals = tuned_params$x)
+cv.randForest <- crossval(learner = randForest.learner, task = task, iters = 5,
+                          stratif=TRUE, measures = list(acc,mlr::auc,tpr,tnr), show.info = F)
+cv.randForest$aggr
+@
+
+<<warning=FALSE>>=
+mod <- train(randForest.learner, task= task)
+test.pred<-predict(mod,newdata = test)
+randForest.test.acc<-mean(test.pred$data[,1]==test.pred$data[,4])
+randForest.test.acc
+@
+
+<<red_RF_ROC, echo=FALSE, eval=FALSE, warning=FALSE, fig.cap="RF po PCA: krzywa ROC">>=
+ROC(cv.randForest$pred$data[,4],cv.randForest$pred$data[,2])
+@
+
+<<red_RF_klas, echo=FALSE, eval=TRUE, warning=FALSE, fig.cap="Las losowy po PCA">>=
+plotLearnerPrediction(learner = randForest.learner, task = task)
+@
+
+\subsection{Maszyna wektorÛw noúnych}
+<<red_svm, echo=FALSE, eval=TRUE>>=
+svm_params <- makeParamSet(
+  makeNumericParam("C", lower = -1, upper = 10, trafo = function(x) 2^x),
+  makeNumericParam("epsilon", lower = -1, upper = 10, trafo = function(x) 2^x)
+)
+ctrl = makeTuneControlRandom(maxit = 10)
+rdesc = makeResampleDesc("CV", iters = 3L)
+tuned_params = tuneParams("classif.ksvm", task = task, resampling = rdesc,
+  par.set = svm_params, control = ctrl)
+svm.learner <- setHyperPars(makeLearner("classif.ksvm", predict.type = 'prob'), par.vals = tuned_params$x)
+cv.svm <- crossval(learner = svm.learner, task = task, iters = 5,
+                   stratif=TRUE, measures = list(acc,mlr::auc,tpr,tnr), show.info = F)
+cv.svm$aggr
+@
+
+
+<<echo=FALSE>>=
+mod <- train(svm.learner, task= task)
+test.pred<-predict(mod,newdata = test)
+svm.test.acc<-mean(test.pred$data[,1]==test.pred$data[,4])
+svm.test.acc
+@
+
+<<red_svm_roc, echo=FALSE, eval=FALSE, fig.cap="SVM po PCA: krzywa ROC">>=
+ROC(cv.svm$pred$data[,4],cv.svm$pred$data[,2])
+@
+
+<<red_svm_klas, echo=FALSE, eval=TRUE, fig.cap="Klasyfikacja metodπ SVM po PCA">>=
+plotLearnerPrediction(learner = svm.learner, task = task)
+@
+\subsection{XGBoost}
+<<echo=FALSE>>=
+xgb_params <- makeParamSet(
+  makeIntegerParam("nrounds", lower = 100, upper = 500),
+  makeIntegerParam("max_depth", lower = 1, upper = 10),
+  makeNumericParam("eta", lower = .1, upper = .5),
+  makeNumericParam("lambda", lower = -1, upper = 0, trafo = function(x) 10^x)
+)
+control <- makeTuneControlRandom(maxit = 10)
+resample_desc <- makeResampleDesc("CV", iters = 5)
+tuned_params <- tuneParams('classif.xgboost', task = task,resampling = resample_desc,par.set = xgb_params,
+control = control)
+xgboost.learner <- makeLearner("classif.xgboost", predict.type = 'prob', par.vals = tuned_params$x)
+cv.xgboost <- crossval(learner = xgboost.learner, task = task, iters = 5,
+                          stratif=TRUE, measures = list(acc,mlr::auc,tpr,tnr), show.info = F)
+cv.xgboost$aggr
+@
+
+<<echo=FALSE>>=
+mod <- train(xgboost.learner, task= task)
+test.pred<-predict(mod,newdata = test)
+xgboost.test.acc<-mean(test.pred$data[,1]==test.pred$data[,4])
+xgboost.test.acc
+@
+
+<<echo=FALSE, eval=FALSE, fig.cap="XGBoost: krzywa ROC">>=
+ROC(cv.xgboost$pred$data[,4],cv.xgboost$pred$data[,2])
+@
+
+<<echo=FALSE, eval=TRUE, fig.cap="Klasyfikacja metodπ SVM po PCA">>=
+plotLearnerPrediction(learner = xgboost.learner, task = task)
+@
+\subsection{Sieci neuronowe}
+<<echo=FALSE>>=
+nn_params <- makeParamSet(
+  makeIntegerParam("size", lower = 5, upper = 10),
+  makeNumericParam("decay", lower=0,upper=5)
+)
+control <- makeTuneControlRandom(maxit = 10)
+resample_desc <- makeResampleDesc("CV", iters = 3)
+nn_learner <- makeLearner("classif.nnet", predict.type = 'prob', trace=FALSE)
+tuned_params <- tuneParams(nn_learner, task = task,resampling = resample_desc,par.set = nn_params, control = control)
+nn_learner <- makeLearner("classif.nnet", predict.type = 'prob', par.vals = tuned_params$x)
+nn_learner<-setHyperPars(nn_learner,trace=FALSE)
+cv.nn <- crossval(learner = nn_learner, task = task, iters = 5, stratif=TRUE, measures = list(acc,mlr::auc,tpr,tnr), show.info = F)
+
+cv.nn$aggr
+@
+
+
+<<>>=
+mod <- train(nn_learner, task= task)
+test.pred<-predict(mod,newdata = test)
+nn.test.acc<-mean(test.pred$data[,1]==test.pred$data[,4])
+nn.test.acc
+@
+
+
+
+<<echo=FALSE, eval=TRUE, fig.cap="Klasyfikacja za pomocπ sieci neuronowych po PCA">>=
+plotLearnerPrediction(learner = nn_learner, task = task)
+@
+\subsection{PorÛwnanie}
+<<red_por_klas, echo=FALSE, eval=TRUE, results='asis', fig.cap="PorÛwnanie klasyfikatorÛw (po PCA)">>=
+wyniki<-rbind(cv.logistic$aggr,cv.lda$aggr,cv.bayes$aggr,cv.knn$aggr,cv.randForest$aggr,cv.svm$aggr,cv.xgboost$aggr, cv.nn$aggr)
+wyniki<-as.data.frame(wyniki)
+rownames(wyniki)<-c('Regresja Logistyczna','LDA','Naiwny Bayes','kNN','Lasy Losowe','Maszyna WektorÛw Noúnych','XGBoost','Sieci neuronowe')
+colnames(wyniki)<-c('SkutecznoúÊ','AUC','Czu≥oúÊ','SpecyficznoúÊ')
+xtab<-xtable(wyniki, caption = 'PorÛwnanie skutecznoúci metod klasyfikacji dla sk≥adowych g≥Ûwnych danych "spam" ')
+print(xtab)
+@
+Tym razem wyraüniej widaÊ przewagÍ z≥oøonoúci algorytmu XGBoost nad prostrzymi metodami np. Regresji Logistycznej. SkutecznoúÊ metody LDA wyraünie spad≥a, natomiast pozosta≥e metody zaliczy≥y oko≥o 4-5\% spadek skutecznoúci. 
+<<red_pred, echo=FALSE, eval=TRUE>>=
+pred.logistic<-getRRPredictions(cv.logistic)
+pred.lda<-getRRPredictions(cv.lda)
+pred.bayes<-getRRPredictions(cv.bayes)
+pred.knn<-getRRPredictions(cv.knn)
+pred.randForest<-getRRPredictions(cv.randForest)
+pred.svm<-getRRPredictions(cv.svm)
+pred.xgboost<-getRRPredictions(cv.xgboost)
+pred.xgboost<-getRRPredictions(cv.nn)
+@
+Poniøej przedstawiono porÛwnanie krzywych ROC dla wszystkich klasyfikatorÛw:
+<<red_por_roc, echo=FALSE, eval=TRUE, fig.height=4.5, fig.width=8, fig.cap="PorÛwnanie krzywych ROC dla rÛønych klasyfikatorÛw (po PCA)">>=
+df = generateThreshVsPerfData(list(lda = pred.lda, logistic=pred.logistic, bayes=pred.bayes,knn=pred.knn,randForest=pred.randForest,svm = pred.svm, xgboost=pred.xgboost, nnet= pred.nn), measures = list(fpr, tpr))
+ggplot(as.data.frame(df$data),aes(x=fpr,y=tpr, col=learner))+geom_line()
+@
+
+Podobnie tym razem, bazujπc na mierze dok≥adnoúci i auc, moøemy stwierdziÊ, øe najlepiej poradzi≥a sobie metoda lasÛw losowych.
+
+\section{Analiza skupieÒ}
+Za≥Ûømy na chwilÍ, øe nie wiemy jak sklasyfikowane sπ obserwacje, ktÛrymi dysponujemy, tzn. nie wiemy czy sπ spamem, czy nie. Usuwamy z danych kolumnÍ typu factor, wskazujπcπ na ten podzia≥. Wykorzystamy poznane metody klasteryzacji, majπce na celu grupowanie danych w skupienia obiektÛw jak najbardziej do siebie podobnych, co wiπøe siÍ z rozpoznaniem struktury danych. Rozwaøymy metody grupujπce, jak k-means i PAM oraz metody hierarchiczne, tj. AGNES i DIANA. W przypadku metody AGNES rozwaøymy 3 metody ≥πczenia skupieÒ: "average", "single" i "complete". Macierze niepodobieÒstw bÍdπ bazowa≥y na odleg≥oúci euklidesowej. Nie wykonujemy skalowania danych, poniewaø wariancja zmiennych jest jednorodna i taka operacja mog≥aby pogorszyÊ wyniki. Na koniec ocenimy jakoúÊ grupowania.
+\subsection{Metody grupujπce}
+\subsubsection{K-means}
+Poniewaø dysponujemy wy≥πcznie zmiennymi iloúciowymi, moøemy úmia≥o zastosowaÊ metodÍ k-means. Poniøesz przedstawiamy rezultat w przyk≥adowej przestrzeni dwÛch zmiennych.
+<<start_an_sk, echo=FALSE, eval=TRUE, fig.cap="Wizualizacja wynikÛw analizy skupieÒ metodπ k-means (w przek≥adowej przestrzeni dwÛch zmiennych)">>=
+spam.cechy <- spam[,1:57] # Usuwamy etykietki klas
+spam.etykietki.rzeczywiste <- spam[,58]
+
+k <- 2
+kmeans.k2 <- kmeans(spam.cechy, centers=k, iter.max=20)
+spam.etykietki.kmeans <- kmeans.k2$cluster
+
+plot(spam.cechy$A.55, spam.cechy$A.57, col=spam.etykietki.kmeans,
+     pch=as.numeric(spam.etykietki.rzeczywiste))
+#points( kmeans.k2$centers[,c("A.23","A.6")],pch=16, cex=1.5, col=1:2)
+
+@
+\subsubsection{PAM}
+WyprÛbujemy rÛwnieø nieco bardziej z≥oøonπ metodÍ PAM. Poniøej prezentujemy wykres podzia≥u na klastry oraz úredniπ szerokoúÊ  silhouette.
+<<pam, echo=FALSE, eval=TRUE, fig.height=4.5, fig.width=6, fig.cap="Wizualizacja wynikÛw analizy skupieÒ metodπ PAM">>=
+#PAM
+spam.pam<-spam[,1:57]
+mac.niepod<-as.matrix(daisy(spam.pam))
+spam.pam2 <- pam(x = mac.niepod, diss=TRUE, k=2)
+etykietki <- spam.pam2$clustering
+plot(spam.pam2, col=etykietki, metric="euclidian")
+# summary(spam.pam2)
+#  rozmiar(size), maksymalna i úrednia wartoúÊ niepodobieÒstwa (max_diss,av_diss),
+#  úrednica (diameter), separacja  (separation)
+# ktÛre obiekty sπ centrami skupisk : CentraSkupisk.nazwy <- Cars93.pam3$medoids
+@
+Obserwujπc powyøszy wykres moøemy zaobserwowaÊ, øe otrzymaliúmy skupienia, o wyraünie rÛønych liczbach obserwacji. Przypomnijmy, øe nasz zbiÛr sk≥ada siÍ w ok. 60 \% z maili i ok. 40\% ze spamu, dlatego tak nierÛwne klastry, jakie otrzymaliúmy za pomocπ metody PAM, na pierwszy rzut oka, wydajπ siÍ nieodpowiednie, byÊ moøe metoda PAM wykry≥a innπ zaleønoúÊ w danych.
+<<clusplot, echo=FALSE, eval=TRUE, fig.cap="Wizualizacja wynikÛw analizy skupieÒ z wykorzystaniem PCA">>=
+spam.CechyLiczbowe <- spam[,names(unlist(lapply(spam, FUN=function(x) if(is.numeric(x)) "numeric" else NULL)))]
+spam.numeric.pam2 <- pam(spam.CechyLiczbowe, k=2, metric="euclidean")
+clusplot(spam.numeric.pam2, color=FALSE, col.clus="yellow", col.p="red", plotchar=TRUE, shade=TRUE) #clusplot, z PCA
+
+#jeszcze nie wiem jak oprÛcz kszta≥tÛw rozrÛøniÊ kolory miÍdzy klastrami :()
+@
+Przejdziemy teraz do drugiej grupy metod analizy skupieÒ.
+\subsection{Metody chierarchiczne}
+Podstawowπ wadπ metod grupujπcych jest skutecznoúÊ wykrywanie skupieÒ wypuk≥ych, metody chierarchiczne nie posiadajπ tej wady. Rozwaøymy dwa warianty: metodÍ aglomeracyjnπ AGNES i metodÍ rozdzielania DIANA. Wyniki sprÛbujemy zwizualizowaÊ za pomocπ wykresÛw typu 'bannerplot', dendrogramy w przypadku tak duøej iloúci danych, sπ ca≥kowicie nieczytelne.
+
+<<AS_chierarch, echo=FALSE, eval=TRUE, fig.width=8, fig.height=7, fig.cap="AGNES i DIANA: wykresy typu 'banner'">>=
+spam.scale<-spam[,1:57]
+spam.MacNiepodob<-daisy(spam) #przygotowujemy macierz podobieÒstw/odmiennosci
+spam.agnes.avg <- agnes(x=spam.MacNiepodob,diss=TRUE,method="average")
+spam.agnes.single <- agnes(x=spam.MacNiepodob,diss=TRUE,method="single")
+spam.agnes.complete <- agnes(x=spam.MacNiepodob,diss=TRUE,method="complete")
+spam.diana <- diana(x=spam.MacNiepodob,diss=TRUE)
+par(mfrow=c(2,2))
+plot(spam.agnes.avg, which.plot=1, main="AGNES: average linkage")
+plot(spam.agnes.single, which.plot=1, main="AGNES: single linkage")
+plot(spam.agnes.complete, which.plot=1, main="AGNES: complete linkage")
+plot(spam.diana, which.plot=1, main="DIANA")
+par(mfrow=c(1,1))
+@
+Widzimy, øe metody "average" and "single" poradzi≥y sobie lepiej od pozosta≥ych.
+
+\subsubsection{Wskaüniki wewnÍtrzne}
+W kolejnym kroku dokonamy analizy jakoúci grupowania, odwo≥ujπc siÍ wy≥πcznie do w≥asnoúci zawartych w danych. Weümiemy pod uwagÍ m. in. takie w≥asnoúci jak: zwartoúÊ, spÛjnoúÊ czy separacja przestrzenna. Pos≥uøymy siÍ wskaünikami Silhouette i Dunn'a.
+Wskaünik silhouette bierze pod uwagÍ zwartoúÊ klastrÛw i separacjÍ przestrzennπ, poniøej prezentujemy wykres úredniej wartoúci silhouette dla ca≥ej partycji w przypadku podzia≥u na $k=2, \dots, 6$ klastrÛw.
+<<tot_internal, echo=FALSE, eval=TRUE, warning=FALSE, fig.cap="Wskaüniki wewnÍtrzne: silhouette">>=
+mac_pod<-daisy(spam.cechy)
+############### silhuette ###################
+# kmeans
+cl2.kmeans <- kmeans(spam.cechy, centers=2)
+cl3.kmeans <- kmeans(spam.cechy, centers=3)
+cl4.kmeans <- kmeans(spam.cechy, centers=4)
+cl5.kmeans <- kmeans(spam.cechy, centers=5)
+cl6.kmeans <- kmeans(spam.cechy, centers=6)
+
+sil.k2.kmeans <- silhouette(cl2.kmeans$cluster, mac_pod)
+sil.k3.kmeans <- silhouette(cl3.kmeans$cluster, mac_pod)
+sil.k4.kmeans <- silhouette(cl4.kmeans$cluster, mac_pod)
+sil.k5.kmeans <- silhouette(cl5.kmeans$cluster, mac_pod)
+sil.k6.kmeans <- silhouette(cl6.kmeans$cluster, mac_pod)
+
+# pam
+cl2.pam <- pam(spam.cechy, k=2)
+cl3.pam <- pam(spam.cechy, k=3)
+cl4.pam <- pam(spam.cechy, k=4)
+cl5.pam <- pam(spam.cechy, k=5)
+cl6.pam <- pam(spam.cechy, k=6)
+
+sil.k2.pam <- silhouette(cl2.pam, mac_pod)
+sil.k3.pam <- silhouette(cl3.pam, mac_pod)
+sil.k4.pam <- silhouette(cl4.pam, mac_pod)
+sil.k5.pam <- silhouette(cl5.pam, mac_pod)
+sil.k6.pam <- silhouette(cl6.pam, mac_pod)
+
+#agnes
+agnes_spam<-agnes(spam.cechy, method="average")
+cl2.agnes <- cutree(agnes_spam, k=2)
+cl3.agnes <- cutree(agnes_spam, k=3)
+cl4.agnes <- cutree(agnes_spam, k=4)
+cl5.agnes <- cutree(agnes_spam, k=5)
+cl6.agnes <- cutree(agnes_spam, k=6)
+
+sil.k2.agnes <- silhouette(cl2.agnes, mac_pod)
+sil.k3.agnes <- silhouette(cl3.agnes, mac_pod)
+sil.k4.agnes <- silhouette(cl4.agnes, mac_pod)
+sil.k5.agnes <- silhouette(cl5.agnes, mac_pod)
+sil.k6.agnes <- silhouette(cl6.agnes, mac_pod)
+
+#agnes1
+agnes_spamS<-agnes(spam.cechy, method="single")
+cl2.agnesS <- cutree(agnes_spamS, k=2)
+cl3.agnesS <- cutree(agnes_spamS, k=3)
+cl4.agnesS <- cutree(agnes_spamS, k=4)
+cl5.agnesS <- cutree(agnes_spamS, k=5)
+cl6.agnesS <- cutree(agnes_spamS, k=6)
+
+sil.k2.agnesS <- silhouette(cl2.agnesS, mac_pod)
+sil.k3.agnesS <- silhouette(cl3.agnesS, mac_pod)
+sil.k4.agnesS <- silhouette(cl4.agnesS, mac_pod)
+sil.k5.agnesS <- silhouette(cl5.agnesS, mac_pod)
+sil.k6.agnesS <- silhouette(cl6.agnesS, mac_pod)
+
+#agnes2
+agnes_spamC<-agnes(spam.cechy, method="complete")
+cl2.agnesC <- cutree(agnes_spamC, k=2)
+cl3.agnesC <- cutree(agnes_spamC, k=3)
+cl4.agnesC <- cutree(agnes_spamC, k=4)
+cl5.agnesC <- cutree(agnes_spamC, k=5)
+cl6.agnesC <- cutree(agnes_spamC, k=6)
+
+sil.k2.agnesC <- silhouette(cl2.agnesC, mac_pod)
+sil.k3.agnesC <- silhouette(cl3.agnesC, mac_pod)
+sil.k4.agnesC <- silhouette(cl4.agnesC, mac_pod)
+sil.k5.agnesC <- silhouette(cl5.agnesC, mac_pod)
+sil.k6.agnesC <- silhouette(cl6.agnesC, mac_pod)
+
+
+# diana
+diana_spam<- diana(spam.cechy)
+cl2.diana <- cutree(diana_spam, k=2)
+cl3.diana <- cutree(diana_spam, k=3)
+cl4.diana <- cutree(diana_spam, k=4)
+cl5.diana <- cutree(diana_spam, k=5)
+cl6.diana <- cutree(diana_spam, k=6)
+
+sil.k2.diana <- silhouette(cl2.diana, mac_pod)
+sil.k3.diana <- silhouette(cl3.diana, mac_pod)
+sil.k4.diana <- silhouette(cl4.diana, mac_pod)
+sil.k5.diana <- silhouette(cl5.diana, mac_pod)
+sil.k6.diana <- silhouette(cl6.diana, mac_pod)
+
+#summary(sil.k2)$clus.avg.widths[[1]]
+#summary(sil.k3)$clus.avg.widths[[1]]
+#summary(sil.k4)$clus.avg.widths[[1]]
+#summary(sil.k5)$clus.avg.widths[[1]]
+#summary(sil.k6)$clus.avg.widths[[1]]
+#summary(sil.k2)$clus.avg.widths[[2]]
+#summary(sil.k3)$clus.avg.widths[[2]]
+#summary(sil.k4)$clus.avg.widths[[2]]
+#summary(sil.k5)$clus.avg.widths[[2]]
+#summary(sil.k6)$clus.avg.widths[[2]]
+
+plot(c(2:6), c(
+summary(sil.k2.kmeans)$si.summary[[4]],
+summary(sil.k3.kmeans)$si.summary[[4]],
+summary(sil.k4.kmeans)$si.summary[[4]],
+summary(sil.k5.kmeans)$si.summary[[4]],
+summary(sil.k6.kmeans)$si.summary[[4]]), xlab="Silhouette", ylab="Liczba klastrÛw", ylim=c(0.5, 1), type='b', pch=8, col="hotpink4", lwd=2, main="Silhouette")
+lines( c(2:6),
+c(summary(sil.k2.pam)$si.summary[[4]],
+summary(sil.k3.pam)$si.summary[[4]],
+summary(sil.k4.pam)$si.summary[[4]],
+summary(sil.k5.pam)$si.summary[[4]],
+summary(sil.k6.pam)$si.summary[[4]]), type='b', pch=9, col="pink", lwd=2)
+lines( c(2:6),
+c(summary(sil.k2.agnes)$si.summary[[4]],
+summary(sil.k3.agnes)$si.summary[[4]],
+summary(sil.k4.agnes)$si.summary[[4]],
+summary(sil.k5.agnes)$si.summary[[4]],
+summary(sil.k6.agnes)$si.summary[[4]]), type='b', pch=10, col="royalblue", lwd=2)
+lines( c(2:6),
+c(summary(sil.k2.agnesS)$si.summary[[4]],
+summary(sil.k3.agnesS)$si.summary[[4]],
+summary(sil.k4.agnesS)$si.summary[[4]],
+summary(sil.k5.agnesS)$si.summary[[4]],
+summary(sil.k6.agnesS)$si.summary[[4]]), type='b', pch=12, col="grey", lwd=2)
+lines( c(2:6),
+c(summary(sil.k2.agnesC)$si.summary[[4]],
+summary(sil.k3.agnesC)$si.summary[[4]],
+summary(sil.k4.agnesC)$si.summary[[4]],
+summary(sil.k5.agnesC)$si.summary[[4]],
+summary(sil.k6.agnesC)$si.summary[[4]]), type='b', pch=13, col="black", lwd=2)
+lines( c(2:6),
+c(summary(sil.k2.diana)$si.summary[[4]],
+summary(sil.k3.diana)$si.summary[[4]],
+summary(sil.k4.diana)$si.summary[[4]],
+summary(sil.k5.diana)$si.summary[[4]],
+summary(sil.k6.diana)$si.summary[[4]]), type='b', pch=11, col="orchid", lwd=2)
+legend("bottomleft", c("kmeans", "pam", "agnes_a", "agnes_s", "agnes_c", "diana"), col=c("hotpink4", "pink", "royalblue", "grey", "black", "orchid"), pch=c(8,9,10,12, 13,11), cex=0.7, title="Legenda")
+@
+Nietrudno zauwaøyÊ, øe w przypadku kaødej z metod miara silhouette osiπga najwiÍkszπ wartoúÊ w przypadku podzia≥u na 2 skupienia. Jakπ kolejnπ miarÍ jakoúci grupowania rozwaøymy wskaünik Dunn'a, przyjmujπcy wartoúci dodatnie, im wiÍksza jego wartoúÊ,  tym lepsza jakoúÊ. Poniøszy wykres przedstawia wartoúci wskaünika Dunn'a dla poszczegÛlnych metod w przypadku grupowania na od $2$ do $6$ klastrÛw. 
+<<dunn, echo=FALSE, eval=TRUE, warning=FALSE, fig.cap="Wskaüniki wewnÍtrzne: wsk. Dunn'a">>=
+### WSKAèNIK DUNN'A ###
+plot ( c(2:6), c(dunn(distance=as.matrix(mac_pod), cl2.kmeans$cluster),
+dunn(as.matrix(mac_pod), cl3.kmeans$cluster),
+dunn(as.matrix(mac_pod), cl4.kmeans$cluster),
+dunn(as.matrix(mac_pod), cl5.kmeans$cluster),
+dunn(as.matrix(mac_pod), cl6.kmeans$cluster)), main="Wskaünik Dunn'a", ylim=c(0, 1), xlab="Wskaünik Dunn'a", ylab="Liczba klastrÛw", type='b', lwd=2, pch=8, col="hotpink4")
+lines( c(2:6),
+c(dunn(distance=as.matrix(mac_pod), cl2.pam$clustering),
+dunn(as.matrix(mac_pod), cl3.pam$clustering),
+dunn(as.matrix(mac_pod), cl4.pam$clustering),
+dunn(as.matrix(mac_pod), cl5.pam$clustering),
+dunn(as.matrix(mac_pod), cl6.pam$clustering)), type='b', pch=9, lwd=2, col="pink")
+lines( c(2:6), 
+c(dunn(distance=as.matrix(mac_pod), cl2.agnes),
+dunn(as.matrix(mac_pod), cl3.agnes),
+dunn(as.matrix(mac_pod), cl4.agnes),
+dunn(as.matrix(mac_pod), cl5.agnes),
+dunn(as.matrix(mac_pod), cl6.agnes)), type='b', lwd=2, pch=10, col="royalblue")
+lines( c(2:6), 
+c(dunn(distance=as.matrix(mac_pod), cl2.agnesS),
+dunn(as.matrix(mac_pod), cl3.agnesS),
+dunn(as.matrix(mac_pod), cl4.agnesS),
+dunn(as.matrix(mac_pod), cl5.agnesS),
+dunn(as.matrix(mac_pod), cl6.agnesS)), type='b', lwd=2, pch=12, col="grey")
+lines( c(2:6), 
+c(dunn(distance=as.matrix(mac_pod), cl2.agnesC),
+dunn(as.matrix(mac_pod), cl3.agnesC),
+dunn(as.matrix(mac_pod), cl4.agnesC),
+dunn(as.matrix(mac_pod), cl5.agnesC),
+dunn(as.matrix(mac_pod), cl6.agnesC)), type='b', lwd=2, pch=13, col="black")
+lines( c(2:6),
+c(dunn(distance=as.matrix(mac_pod), cl2.diana),
+dunn(as.matrix(mac_pod), cl3.diana),
+dunn(as.matrix(mac_pod), cl4.diana),
+dunn(as.matrix(mac_pod), cl5.diana),
+dunn(as.matrix(mac_pod), cl6.diana)), type='b', lwd=2, pch=11, col="orchid")
+legend("topright", c("kmeans", "pam", "agnes_a","agnes_s","agnes_c", "diana"), col=c("hotpink4", "pink", "royalblue","grey","black", "orchid"), pch=c(8,9,10,12,13,11), cex=0.7, title="Legenda")
+@
+Wartoúci wskaünikÛw Dunn'a sπ bardzo odmienne. W przypadku metod chierarchicznych: AGNES i DIANY wskaünik ten sugeruje odpowiednio podzia≥y na 3 i 4 klastry. Wartoúci wskaünika Dunn'a dla k-means i PAM sπ tak ma≥e, øe nie jest moøliwy odczyt bezpoúrednio z wykresu, dlatego zawarliúmy wartoúci w poniøszej tabelce, gdzie agnesa oznacza AGNES z wykorzystaniem metody ≥πczenia "average", agnesS z wykorzystaniem ≥πczenia "single" a agnesc z wykorzystaniem ≥πczenia "complete".
+<<dunn_tab, echo=FALSE, eval=TRUE, warning=FALSE, results='asis'>>=
+w4<-c(dunn(distance=as.matrix(mac_pod), cl2.diana),
+dunn(as.matrix(mac_pod), cl3.diana),
+dunn(as.matrix(mac_pod), cl4.diana),
+dunn(as.matrix(mac_pod), cl5.diana),
+dunn(as.matrix(mac_pod), cl6.diana))
+w3<-c(dunn(distance=as.matrix(mac_pod), cl2.agnes),
+dunn(as.matrix(mac_pod), cl3.agnes),
+dunn(as.matrix(mac_pod), cl4.agnes),
+dunn(as.matrix(mac_pod), cl5.agnes),
+dunn(as.matrix(mac_pod), cl6.agnes))
+w3S<-c(dunn(distance=as.matrix(mac_pod), cl2.agnesS),
+dunn(as.matrix(mac_pod), cl3.agnesS),
+dunn(as.matrix(mac_pod), cl4.agnesS),
+dunn(as.matrix(mac_pod), cl5.agnesS),
+dunn(as.matrix(mac_pod), cl6.agnesS))
+w3C<-c(dunn(distance=as.matrix(mac_pod), cl2.agnesC),
+dunn(as.matrix(mac_pod), cl3.agnesC),
+dunn(as.matrix(mac_pod), cl4.agnesC),
+dunn(as.matrix(mac_pod), cl5.agnesC),
+dunn(as.matrix(mac_pod), cl6.agnesC))
+w2<-c(dunn(distance=as.matrix(mac_pod), cl2.pam$clustering),
+dunn(as.matrix(mac_pod), cl3.pam$clustering),
+dunn(as.matrix(mac_pod), cl4.pam$clustering),
+dunn(as.matrix(mac_pod), cl5.pam$clustering),
+dunn(as.matrix(mac_pod), cl6.pam$clustering))
+w1<-c(dunn(distance=as.matrix(mac_pod), cl2.kmeans$cluster),
+dunn(as.matrix(mac_pod), cl3.kmeans$cluster),
+dunn(as.matrix(mac_pod), cl4.kmeans$cluster),
+dunn(as.matrix(mac_pod), cl5.kmeans$cluster),
+dunn(as.matrix(mac_pod), cl6.kmeans$cluster))
+w<-c("k-means", "pam", "agnes_a","agnes_S", "agnes_C", "diana")
+k<-c("2","3", "4","5", "6")
+macierz<-rbind(w1,w2,w3, w3S, w3C,w4)
+dimnames(macierz)=list(w,k)
+tabela3<-xtable(macierz, digits=5, row.names=FALSE, caption="Wskaünik Dunn'a", label="tabela:tabela3")
+
+# align(tabela)<-"|c|c|c|c|c|c|"
+print(tabela3, type="latex", table.placement="H", sanitize.text.function = function(x) {x})
+@
+Widzimy, øe w przypadku metod k-means i pam, wskaünik Dunn'a identyfikuje grupowanie najlepszej jakoúci dla 2 klastrÛw.
+
+
+\subsubsection{Wskaüniki zewnÍtrzne}
+W kolejnym kroku zajmiemy siÍ analizπ wskaünikÛw zewnÍtrznych, czyli takich, ktÛre wykorzystujπ informacjÍ o rzeczywistej przynaleønoúci do skupieÒ. Rozwaøymy 4 metody i przypadek 2 klastrÛw. Poniøsza tabelka przedstawia iloúÊ maili i spamu przyporzπdkowych do dwÛch klastrÛw i \% par, ktÛra w≥aúciwie znalaz≥y siÍ w osobnych skupieniach.
+<<zgodnosc_partycji2, echo=FALSE, eval=TRUE, results='asis'>>=
+
+# porÛwnanie wynikow grupowania z rzeczywistπ przynaleznoscia do klas
+tab.spam.kmeans <- table(kmeans.k2$cluster, spam$spam)
+#matchClasses(tab.spam.kmeans, method="exact")
+
+tab.spam.pam <- table(spam.pam2$clustering, spam$spam)
+#matchClasses(tab.spam.pam, method="exact")
+
+tab.spam.agnes <- table(cl2.agnes, spam$spam)
+#matchClasses(tab.spam.agnes, method="exact")
+
+tab.spam.agnesS <- table(cl2.agnesS, spam$spam)
+tab.spam.agnesC <- table(cl2.agnesC, spam$spam)
+
+tab.spam.diana <- table(cl2.diana, spam$spam)
+#matchClasses(tab.spam.diana, method="exact")
+
+
+w2<-c(tab.spam.pam[1],tab.spam.pam[2],tab.spam.pam[3],tab.spam.pam[4], 100*( tab.spam.pam[1]+tab.spam.pam[4] )/4601)
+w1<-c(tab.spam.kmeans[1],tab.spam.kmeans[2],tab.spam.kmeans[3],tab.spam.kmeans[4], 100*( tab.spam.kmeans[1]+tab.spam.kmeans[4] )/4601)
+w3<-c(tab.spam.agnes[1],tab.spam.agnes[2],tab.spam.agnes[3],tab.spam.agnes[4], 100*( tab.spam.agnes[1]+tab.spam.agnes[4] )/4601)
+w3S<-c(tab.spam.agnesS[1],tab.spam.agnesS[2],tab.spam.agnesS[3],tab.spam.agnesS[4], 100*( tab.spam.agnesS[1]+tab.spam.agnesS[4] )/4601)
+w3C<-c(tab.spam.agnesC[1],tab.spam.agnesC[2],tab.spam.agnesC[3],tab.spam.agnesC[4], 100*( tab.spam.agnesC[1]+tab.spam.agnesC[4] )/4601)
+w4<-c(tab.spam.diana[1],tab.spam.diana[2],tab.spam.diana[3],tab.spam.diana[4], 100*( tab.spam.diana[1]+tab.spam.diana[4] )/4601)
+
+w<-c("k-means", "pam", "agnes_a", "agnes_s", "agnes_c", "diana")
+k<-c("e-mail_1","e-mail_2", "spam_1","spam_2", "matched(proc)")
+macierz<-rbind(w1,w2,w3, w3S, w3C ,w4)
+dimnames(macierz)=list(w,k)
+tabela<-xtable(macierz, digits=0, row.names=FALSE, caption="Dopasowanie klas", label="tabela:tabela")
+
+# align(tabela)<-"|c|c|c|c|c|c|"
+print(tabela, type="latex", table.placement="H", sanitize.text.function = function(x) {x})
+
+
+@
+W przypadku k-means i PAM otrzymujemy najwiÍkszy procent "pasujπcych" par (ostatnia kolumna). Analizujπc dalej wskaüniki zgodnoúci partycji, przechodzimy do wyznaczenia wskaünikÛw Randa, Jaccarda i Fowlkesa-Mallowsa. 
+Wskaünik Randa przyjmuje wartoúci od $0$ do $1$ i im wiÍksza jego wartoúÊ tym lepsza zgodnoúÊ partycji. Poniøej prezentujemy wykres wartoúci wskaünika Randa dla rozwaøanych metod zastosowanych do grupowania na od $2$ do $6$ skupieÒ.
+<<wsk_zew_Rand_jaccard_fawkl, echo=FALSE, eval=TRUE, fig.cap="Wskaüniki zewnÍtrzne: wsk. Randa">>=
+
+pred2.kmeans <- as.integer(cl2.kmeans$cluster)
+pred3.kmeans <- as.integer(cl3.kmeans$cluster)
+pred4.kmeans <- as.integer(cl4.kmeans$cluster)
+pred5.kmeans <- as.integer(cl5.kmeans$cluster)
+pred6.kmeans <- as.integer(cl6.kmeans$cluster)
+
+pred2.pam <- as.integer(cl2.pam$clustering)
+pred3.pam <- as.integer(cl3.pam$clustering)
+pred4.pam <- as.integer(cl4.pam$clustering)
+pred5.pam <- as.integer(cl5.pam$clustering)
+pred6.pam <- as.integer(cl6.pam$clustering)
+
+pred2.agnes <- as.integer(cl2.agnes)
+pred3.agnes <- as.integer(cl3.agnes)
+pred4.agnes <- as.integer(cl4.agnes)
+pred5.agnes <- as.integer(cl5.agnes)
+pred6.agnes <- as.integer(cl6.agnes)
+
+pred2.agnesS <- as.integer(cl2.agnesS)
+pred3.agnesS <- as.integer(cl3.agnesS)
+pred4.agnesS <- as.integer(cl4.agnesS)
+pred5.agnesS <- as.integer(cl5.agnesS)
+pred6.agnesS <- as.integer(cl6.agnesS)
+
+pred2.agnesC <- as.integer(cl2.agnesC)
+pred3.agnesC <- as.integer(cl3.agnesC)
+pred4.agnesC <- as.integer(cl4.agnesC)
+pred5.agnesC <- as.integer(cl5.agnesC)
+pred6.agnesC <- as.integer(cl6.agnesC)
+
+pred2.diana <- as.integer(cl2.diana)
+pred3.diana <- as.integer(cl3.diana)
+pred4.diana <- as.integer(cl4.diana)
+pred5.diana <- as.integer(cl5.diana)
+pred6.diana <- as.integer(cl6.diana)
+
+std2kmeans <- std.ext(pred2.kmeans, as.integer(spam$spam))
+rand2kmeans <- clv.Rand(std2kmeans)
+jaccard2kmeans <- clv.Jaccard(std2kmeans)
+folk.mal2kmeans <- clv.Folkes.Mallows(std2kmeans)
+
+std3kmeans <- std.ext(pred3.kmeans, as.integer(spam$spam))
+rand3kmeans <- clv.Rand(std3kmeans)
+jaccard3kmeans <- clv.Jaccard(std3kmeans)
+folk.mal3kmeans <- clv.Folkes.Mallows(std3kmeans)
+
+std4kmeans <- std.ext(pred4.kmeans, as.integer(spam$spam))
+rand4kmeans <- clv.Rand(std4kmeans)
+jaccard4kmeans <- clv.Jaccard(std4kmeans)
+folk.mal4kmeans <- clv.Folkes.Mallows(std4kmeans)
+
+std5kmeans <- std.ext(pred5.kmeans, as.integer(spam$spam))
+rand5kmeans <- clv.Rand(std5kmeans)
+jaccard5kmeans <- clv.Jaccard(std5kmeans)
+folk.mal5kmeans <- clv.Folkes.Mallows(std5kmeans)
+
+std6kmeans <- std.ext(pred6.kmeans, as.integer(spam$spam))
+rand6kmeans <- clv.Rand(std6kmeans)
+jaccard6kmeans <- clv.Jaccard(std6kmeans)
+folk.mal6kmeans <- clv.Folkes.Mallows(std6kmeans)
+
+###
+
+std2pam <- std.ext(pred2.pam, as.integer(spam$spam))
+rand2pam <- clv.Rand(std2pam)
+jaccard2pam <- clv.Jaccard(std2pam)
+folk.mal2pam <- clv.Folkes.Mallows(std2pam)
+
+std3pam <- std.ext(pred3.pam, as.integer(spam$spam))
+rand3pam <- clv.Rand(std3pam)
+jaccard3pam <- clv.Jaccard(std3pam)
+folk.mal3pam <- clv.Folkes.Mallows(std3pam)
+
+std4pam <- std.ext(pred4.pam, as.integer(spam$spam))
+rand4pam <- clv.Rand(std4pam)
+jaccard4pam <- clv.Jaccard(std4pam)
+folk.mal4pam <- clv.Folkes.Mallows(std4pam)
+
+std5pam <- std.ext(pred5.pam, as.integer(spam$spam))
+rand5pam <- clv.Rand(std5pam)
+jaccard5pam <- clv.Jaccard(std5pam)
+folk.mal5pam <- clv.Folkes.Mallows(std5pam)
+
+std6pam <- std.ext(pred6.pam, as.integer(spam$spam))
+rand6pam <- clv.Rand(std6pam)
+jaccard6pam <- clv.Jaccard(std6pam)
+folk.mal6pam <- clv.Folkes.Mallows(std6pam)
+
+## 
+
+std2agnes <- std.ext(pred2.agnes, as.integer(spam$spam))
+rand2agnes <- clv.Rand(std2agnes)
+jaccard2agnes <- clv.Jaccard(std2agnes)
+folk.mal2agnes <- clv.Folkes.Mallows(std2agnes)
+
+std3agnes <- std.ext(pred3.agnes, as.integer(spam$spam))
+rand3agnes <- clv.Rand(std3agnes)
+jaccard3agnes <- clv.Jaccard(std3agnes)
+folk.mal3agnes <- clv.Folkes.Mallows(std3agnes)
+
+std4agnes <- std.ext(pred4.agnes, as.integer(spam$spam))
+rand4agnes <- clv.Rand(std4agnes)
+jaccard4agnes <- clv.Jaccard(std4agnes)
+folk.mal4agnes <- clv.Folkes.Mallows(std4agnes)
+
+std5agnes <- std.ext(pred5.agnes, as.integer(spam$spam))
+rand5agnes <- clv.Rand(std5agnes)
+jaccard5agnes <- clv.Jaccard(std5agnes)
+folk.mal5agnes <- clv.Folkes.Mallows(std5agnes)
+
+std6agnes <- std.ext(pred6.agnes, as.integer(spam$spam))
+rand6agnes <- clv.Rand(std6agnes)
+jaccard6agnes <- clv.Jaccard(std6agnes)
+folk.mal6agnes <- clv.Folkes.Mallows(std6agnes)
+
+## 
+
+std2agnesS <- std.ext(pred2.agnesS, as.integer(spam$spam))
+rand2agnesS <- clv.Rand(std2agnesS)
+jaccard2agnesS <- clv.Jaccard(std2agnesS)
+folk.mal2agnesS <- clv.Folkes.Mallows(std2agnesS)
+
+std3agnesS <- std.ext(pred3.agnesS, as.integer(spam$spam))
+rand3agnesS <- clv.Rand(std3agnesS)
+jaccard3agnesS <- clv.Jaccard(std3agnesS)
+folk.mal3agnesS <- clv.Folkes.Mallows(std3agnesS)
+
+std4agnesS <- std.ext(pred4.agnesS, as.integer(spam$spam))
+rand4agnesS <- clv.Rand(std4agnesS)
+jaccard4agnesS <- clv.Jaccard(std4agnesS)
+folk.mal4agnesS <- clv.Folkes.Mallows(std4agnesS)
+
+std5agnesS <- std.ext(pred5.agnesS, as.integer(spam$spam))
+rand5agnesS <- clv.Rand(std5agnesS)
+jaccard5agnesS <- clv.Jaccard(std5agnesS)
+folk.mal5agnesS <- clv.Folkes.Mallows(std5agnesS)
+
+std6agnesS <- std.ext(pred6.agnesS, as.integer(spam$spam))
+rand6agnesS <- clv.Rand(std6agnesS)
+jaccard6agnesS <- clv.Jaccard(std6agnesS)
+folk.mal6agnesS <- clv.Folkes.Mallows(std6agnesS)
+
+## 
+
+std2agnesC <- std.ext(pred2.agnesC, as.integer(spam$spam))
+rand2agnesC <- clv.Rand(std2agnesC)
+jaccard2agnesC <- clv.Jaccard(std2agnesC)
+folk.mal2agnesC <- clv.Folkes.Mallows(std2agnesC)
+
+std3agnesC <- std.ext(pred3.agnesC, as.integer(spam$spam))
+rand3agnesC <- clv.Rand(std3agnesC)
+jaccard3agnesC <- clv.Jaccard(std3agnesC)
+folk.mal3agnesC <- clv.Folkes.Mallows(std3agnesC)
+
+std4agnesC <- std.ext(pred4.agnesC, as.integer(spam$spam))
+rand4agnesC <- clv.Rand(std4agnesC)
+jaccard4agnesC <- clv.Jaccard(std4agnesC)
+folk.mal4agnesC <- clv.Folkes.Mallows(std4agnesC)
+
+std5agnesC <- std.ext(pred5.agnesC, as.integer(spam$spam))
+rand5agnesC <- clv.Rand(std5agnesC)
+jaccard5agnesC <- clv.Jaccard(std5agnesC)
+folk.mal5agnesC <- clv.Folkes.Mallows(std5agnesC)
+
+std6agnesC <- std.ext(pred6.agnesC, as.integer(spam$spam))
+rand6agnesC <- clv.Rand(std6agnesC)
+jaccard6agnesC <- clv.Jaccard(std6agnesC)
+folk.mal6agnesC <- clv.Folkes.Mallows(std6agnesC)
+
+
+std2diana <- std.ext(pred2.diana, as.integer(spam$spam))
+rand2diana <- clv.Rand(std2diana)
+jaccard2diana <- clv.Jaccard(std2diana)
+folk.mal2diana <- clv.Folkes.Mallows(std2diana)
+
+std3diana <- std.ext(pred3.diana, as.integer(spam$spam))
+rand3diana <- clv.Rand(std3diana)
+jaccard3diana <- clv.Jaccard(std3diana)
+folk.mal3diana <- clv.Folkes.Mallows(std3diana)
+
+std4diana <- std.ext(pred4.diana, as.integer(spam$spam))
+rand4diana <- clv.Rand(std4diana)
+jaccard4diana <- clv.Jaccard(std4diana)
+folk.mal4diana <- clv.Folkes.Mallows(std4diana)
+
+std5diana <- std.ext(pred5.diana, as.integer(spam$spam))
+rand5diana <- clv.Rand(std5diana)
+jaccard5diana <- clv.Jaccard(std5diana)
+folk.mal5diana <- clv.Folkes.Mallows(std5diana)
+
+std6diana <- std.ext(pred6.diana, as.integer(spam$spam))
+rand6diana <- clv.Rand(std6diana)
+jaccard6diana <- clv.Jaccard(std6diana)
+folk.mal6diana <- clv.Folkes.Mallows(std6diana)
+
+plot(c(2:6), c(rand2kmeans, rand3kmeans, rand4kmeans, rand5kmeans, rand6kmeans), type='b', lwd=2, col="hotpink4", main="Rand", pch=8, ylim=c(0.5, 0.6), xlab="Liczba klastrÛw", ylab="Rand")
+lines(c(2:6), c(rand2pam, rand3pam, rand4pam, rand5pam, rand6pam), type='b', lwd=2, col="pink", pch=9)
+lines(c(2:6), c(rand2agnes, rand3agnes, rand4agnes, rand5agnes, rand6agnes), type='b', lwd=2, col="royalblue", pch=10)
+lines(c(2:6), c(rand2agnesS, rand3agnesS, rand4agnesS, rand5agnesS, rand6agnesS), type='b', lwd=2, col="grey", pch=12)
+lines(c(2:6), c(rand2agnesC, rand3agnesC, rand4agnesC, rand5agnesC, rand6agnesC), type='b', lwd=2, col="black", pch=13)
+lines(c(2:6), c(rand2diana, rand3diana, rand4diana, rand5diana, rand6diana), type='b', lwd=2, col="orchid", pch=11)
+legend("topleft", c("kmeans", "pam", "agnes_a", "agnes_s","agnes_c", "diana"), col=c("hotpink4", "pink", "royalblue","grey","black", "orchid"), pch=c(8,9,10,12,13,11), cex=0.7, title="Legenda")
+
+@
+Wskaünik Randa osiπga wiÍksze wartoúci, zgodnie z wykresem, przy klasteryzacji na $3,4$ lub $5$ skupieÒ. Kierowanie siÍ tylko jednym wskaünikiem, mog≥oby nas zaprowadziÊ do wyciπgniÍcia b≥Ídnych wnioskÛw dotyczπcych wewnÍtrznej struktory danych, dlatego przeanalizujemy inne miary. Poniøej przedstawiamy wykres wskaünikÛw Jaccarda i Fowlkesa-Mallowsa.
+<<wsk_zew_cd, echo=FALSE, eval=TRUE, fig.width=8, fig.height=4.5, fig.cap="Wskaüniki zewnÍtrzne: Jaccarda i Fowlkesa-Mallowsa">>=
+par(mfrow=c(1,2))
+plot(c(2:6), c(jaccard2kmeans, jaccard3kmeans, jaccard4kmeans, jaccard5kmeans, jaccard6kmeans), type='b', lwd=2, col="hotpink4", main="Jaccard", pch=8, ylim=c(0.3, 0.55), xlab="Liczba klastrÛw", ylab="Jaccard")
+lines(c(2:6), c(jaccard2pam, jaccard3pam, jaccard4pam, jaccard5pam, jaccard6pam), type='b', lwd=2, col="pink", pch=9)
+lines(c(2:6), c(jaccard2agnes, jaccard3agnes, jaccard4agnes, jaccard5agnes, jaccard6agnes), type='b', lwd=2, col="royalblue", pch=10)
+lines(c(2:6), c(jaccard2agnesS, jaccard3agnesS, jaccard4agnesS, jaccard5agnesS, jaccard6agnesS), type='b', lwd=2, col="grey", pch=12)
+lines(c(2:6), c(jaccard2agnesC, jaccard3agnesC, jaccard4agnesC, jaccard5agnesC, jaccard6agnesC), type='b', lwd=2, col="black", pch=13)
+lines(c(2:6), c(jaccard2diana, jaccard3diana, jaccard4diana, jaccard5diana, jaccard6diana), type='b', lwd=2, col="orchid", pch=11)
+legend("bottomleft", c("kmeans", "pam", "agnes_a", "agnes_s", "agnes_c", "diana"), col=c("hotpink4", "pink", "royalblue","grey","black", "orchid"), pch=c(8,9,10,12, 13, 11), cex=0.7, title="Legenda")
+
+plot(c(2:6), c(folk.mal2kmeans, folk.mal3kmeans, folk.mal4kmeans, folk.mal5kmeans, folk.mal6kmeans), type='b', lwd=2, col="hotpink4", main="folk.mal", pch=8, ylim=c(0.45, 0.75), xlab="Liczba klastrÛw", ylab="Fowlkes-Mallows")
+lines(c(2:6), c(folk.mal2pam, folk.mal3pam, folk.mal4pam, folk.mal5pam, folk.mal6pam), type='b', lwd=2, col="pink", pch=9)
+lines(c(2:6), c(folk.mal2agnes, folk.mal3agnes, folk.mal4agnes, folk.mal5agnes, folk.mal6agnes), type='b', lwd=2, col="royalblue", pch=10)
+lines(c(2:6), c(folk.mal2agnesS, folk.mal3agnesS, folk.mal4agnesS, folk.mal5agnesS, folk.mal6agnesS), type='b', lwd=2, col="grey", pch=12)
+lines(c(2:6), c(folk.mal2agnesC, folk.mal3agnesC, folk.mal4agnesC, folk.mal5agnesC, folk.mal6agnesC), type='b', lwd=2, col="black", pch=13)
+lines(c(2:6), c(folk.mal2diana, folk.mal3diana, folk.mal4diana, folk.mal5diana, folk.mal6diana), type='b', lwd=2, col="orchid", pch=11)
+legend("bottomleft", c("kmeans", "pam", "agnes_a","agnes_s", "agnes_c", "diana"), col=c("hotpink4", "pink", "royalblue", "orchid"), pch=c(8,9,10, 12, 13,11), cex=0.7, title="Legenda")
+par(mfrow=c(1,1))
+@
+ZarÛwno wskaünik Jaccarda, jak i Fowlkesa-Mallowska przyjmujπ najwiÍksze wartoúci przy klasteryzacji na 2 skupienia, w szczegÛlnoúci istotne rÛønice obserwujemy w przypadku k-means i PAM.
+
+%Na koniec zbadamy problem analizy skupieÒ z uwzglÍdnieniem redukcji wymiary metodπ PCA. Zgodnie z wyjaúnieniem przy problemie %klasteryzacji, bierzemy pod uwagÍ 11 pierwszych sk≥adowych g≥Ûwnych.
+
+%\section{Analiza skupieÒ z redukcjπ wymiaru}
+<<start_an_sk_PCA, echo=FALSE, eval=FALSE, fig.cap="Wizualizacja wynikÛw analizy skupieÒ metodπ k-means (w przek≥adowej przestrzeni dwÛch zmiennych)">>=
+
+spam.cechy.PCA <- spam.PCA[,1:11]
+spam.etykietki.rzeczywiste <- spam$spam
+
+k <- 2
+kmeans.k2 <- kmeans(spam.cechy.PCA, centers=k, iter.max=20)
+spam.etykietki.kmeans <- kmeans.k2$cluster
+
+
+@
+
+<<pam_PCA, echo=FALSE, eval=FALSE, fig.height=4.5, fig.width=6, fig.cap="Wizualizacja wynikÛw analizy skupieÒ metodπ PAM">>=
+#PAM
+spam.pam<-spam.PCA[,1:11]
+mac.niepod<-as.matrix(daisy(spam.pam))
+spam.pam2 <- pam(x = mac.niepod, diss=TRUE, k=2)
+etykietki <- spam.pam2$clustering
+plot(spam.pam2, col=etykietki, metric="euclidian")
+
+clusplot(spam.numeric.pam2, color=FALSE, col.clus="yellow", col.p="red", plotchar=TRUE, shade=TRUE) #clusplot, z PCA
+
+@
+
+<<AS_chierarch_PCA, echo=FALSE, eval=FALSE, fig.height=7, fig.width=8, fig.cap="AGNES i DIANA: wykres typu 'banner'">>=
+spam<-spam.PCA[,1:11]
+spam.MacNiepodob<-daisy(spam) #przygotowujemy macierz podobieÒstw/odmiennosci
+spam.agnes.avg <- agnes(x=spam.MacNiepodob,diss=TRUE,method="average") #wykorzystujemy optymalnπ metodÍ  average linkage
+spam.agnes.single <- agnes(x=spam.MacNiepodob,diss=TRUE,method="single")
+spam.agnes.complete <- agnes(x=spam.MacNiepodob,diss=TRUE,method="complete")
+spam.diana <- diana(x=spam.MacNiepodob,diss=TRUE)
+par(mfrow=c(2,2))
+plot(spam.agnes.avg, which.plot=1, main="AGNES: average linkage")
+plot(spam.agnes.single, which.plot=1, main="AGNES: single linkage")
+plot(spam.agnes.complete, which.plot=1, main="AGNES: complete linkage")
+plot(spam.diana, which.plot=1, main="DIANA")
+par(mfrow=c(1,1))
+spam.agnes.avg.k2 <- cutree(spam.agnes.avg, k=2) #odcinanie klastrÛW
+spam.diana.k2 <- cutree(spam.diana, k=2)
+@
+
+<<tot_internal_PCA, echo=FALSE, eval=FALSE, warning=FALSE, fig.cap="Wskaüniki wewnÍtrzne: silhouette">>=
+spam.cechy<-spam.PCA[,1:11]
+mac_pod<-daisy(spam.cechy)
+############### silhuette ###################
+# kmeans
+cl2.kmeans <- kmeans(spam.cechy, centers=2)
+cl3.kmeans <- kmeans(spam.cechy, centers=3)
+cl4.kmeans <- kmeans(spam.cechy, centers=4)
+cl5.kmeans <- kmeans(spam.cechy, centers=5)
+cl6.kmeans <- kmeans(spam.cechy, centers=6)
+
+sil.k2.kmeans <- silhouette(cl2.kmeans$cluster, mac_pod)
+sil.k3.kmeans <- silhouette(cl3.kmeans$cluster, mac_pod)
+sil.k4.kmeans <- silhouette(cl4.kmeans$cluster, mac_pod)
+sil.k5.kmeans <- silhouette(cl5.kmeans$cluster, mac_pod)
+sil.k6.kmeans <- silhouette(cl6.kmeans$cluster, mac_pod)
+
+# pam
+cl2.pam <- pam(spam.cechy, k=2)
+cl3.pam <- pam(spam.cechy, k=3)
+cl4.pam <- pam(spam.cechy, k=4)
+cl5.pam <- pam(spam.cechy, k=5)
+cl6.pam <- pam(spam.cechy, k=6)
+
+sil.k2.pam <- silhouette(cl2.pam, mac_pod)
+sil.k3.pam <- silhouette(cl3.pam, mac_pod)
+sil.k4.pam <- silhouette(cl4.pam, mac_pod)
+sil.k5.pam <- silhouette(cl5.pam, mac_pod)
+sil.k6.pam <- silhouette(cl6.pam, mac_pod)
+
+#agnes
+agnes_spam<-agnes(spam.cechy)
+cl2.agnes <- cutree(agnes_spam, k=2)
+cl3.agnes <- cutree(agnes_spam, k=3)
+cl4.agnes <- cutree(agnes_spam, k=4)
+cl5.agnes <- cutree(agnes_spam, k=5)
+cl6.agnes <- cutree(agnes_spam, k=6)
+
+sil.k2.agnes <- silhouette(cl2.agnes, mac_pod)
+sil.k3.agnes <- silhouette(cl3.agnes, mac_pod)
+sil.k4.agnes <- silhouette(cl4.agnes, mac_pod)
+sil.k5.agnes <- silhouette(cl5.agnes, mac_pod)
+sil.k6.agnes <- silhouette(cl6.agnes, mac_pod)
+
+agnes_spamS<-agnes(spam.cechy, method="single")
+cl2.agnesS <- cutree(agnes_spamS, k=2)
+cl3.agnesS <- cutree(agnes_spamS, k=3)
+cl4.agnesS <- cutree(agnes_spamS, k=4)
+cl5.agnesS <- cutree(agnes_spamS, k=5)
+cl6.agnesS <- cutree(agnes_spamS, k=6)
+
+sil.k2.agnesS <- silhouette(cl2.agnesS, mac_pod)
+sil.k3.agnesS <- silhouette(cl3.agnesS, mac_pod)
+sil.k4.agnesS <- silhouette(cl4.agnesS, mac_pod)
+sil.k5.agnesS <- silhouette(cl5.agnesS, mac_pod)
+sil.k6.agnesS <- silhouette(cl6.agnesS, mac_pod)
+
+agnes_spamC<-agnes(spam.cechy)
+cl2.agnesC <- cutree(agnes_spamC, k=2)
+cl3.agnesC <- cutree(agnes_spamC, k=3)
+cl4.agnesC <- cutree(agnes_spamC, k=4)
+cl5.agnesC <- cutree(agnes_spamC, k=5)
+cl6.agnesC <- cutree(agnes_spamC, k=6)
+
+sil.k2.agnesC <- silhouette(cl2.agnesC, mac_pod)
+sil.k3.agnesC <- silhouette(cl3.agnesC, mac_pod)
+sil.k4.agnesC <- silhouette(cl4.agnesC, mac_pod)
+sil.k5.agnesC <- silhouette(cl5.agnesC, mac_pod)
+sil.k6.agnesC <- silhouette(cl6.agnesC, mac_pod)
+
+
+# diana
+diana_spam<- diana(spam.cechy)
+cl2.diana <- cutree(diana_spam, k=2)
+cl3.diana <- cutree(diana_spam, k=3)
+cl4.diana <- cutree(diana_spam, k=4)
+cl5.diana <- cutree(diana_spam, k=5)
+cl6.diana <- cutree(diana_spam, k=6)
+
+sil.k2.diana <- silhouette(cl2.diana, mac_pod)
+sil.k3.diana <- silhouette(cl3.diana, mac_pod)
+sil.k4.diana <- silhouette(cl4.diana, mac_pod)
+sil.k5.diana <- silhouette(cl5.diana, mac_pod)
+sil.k6.diana <- silhouette(cl6.diana, mac_pod)
+
+plot(c(2:6), c(
+summary(sil.k2.kmeans)$si.summary[[4]],
+summary(sil.k3.kmeans)$si.summary[[4]],
+summary(sil.k4.kmeans)$si.summary[[4]],
+summary(sil.k5.kmeans)$si.summary[[4]],
+summary(sil.k6.kmeans)$si.summary[[4]]), xlab="Silhouette", ylab="Liczba klastrÛw", ylim=c(0.5, 1), type='b', pch=8, col="hotpink4", lwd=2, main="Silhouette")
+lines( c(2:6),
+c(summary(sil.k2.pam)$si.summary[[4]],
+summary(sil.k3.pam)$si.summary[[4]],
+summary(sil.k4.pam)$si.summary[[4]],
+summary(sil.k5.pam)$si.summary[[4]],
+summary(sil.k6.pam)$si.summary[[4]]), type='b', pch=9, col="pink", lwd=2)
+lines( c(2:6),
+c(summary(sil.k2.agnes)$si.summary[[4]],
+summary(sil.k3.agnes)$si.summary[[4]],
+summary(sil.k4.agnes)$si.summary[[4]],
+summary(sil.k5.agnes)$si.summary[[4]],
+summary(sil.k6.agnes)$si.summary[[4]]), type='b', pch=10, col="royalblue", lwd=2)
+lines( c(2:6),
+c(summary(sil.k2.agnesS)$si.summary[[4]],
+summary(sil.k3.agnesS)$si.summary[[4]],
+summary(sil.k4.agnesS)$si.summary[[4]],
+summary(sil.k5.agnesS)$si.summary[[4]],
+summary(sil.k6.agnesS)$si.summary[[4]]), type='b', pch=12, col="grey", lwd=2)
+lines( c(2:6),
+c(summary(sil.k2.agnesC)$si.summary[[4]],
+summary(sil.k3.agnesC)$si.summary[[4]],
+summary(sil.k4.agnesC)$si.summary[[4]],
+summary(sil.k5.agnesC)$si.summary[[4]],
+summary(sil.k6.agnesC)$si.summary[[4]]), type='b', pch=13, col="black", lwd=2)
+lines( c(2:6),
+c(summary(sil.k2.diana)$si.summary[[4]],
+summary(sil.k3.diana)$si.summary[[4]],
+summary(sil.k4.diana)$si.summary[[4]],
+summary(sil.k5.diana)$si.summary[[4]],
+summary(sil.k6.diana)$si.summary[[4]]), type='b', pch=11, col="orchid", lwd=2)
+legend("bottomleft", c("kmeans", "pam", "agnes", "diana"), col=c("hotpink4", "pink", "royalblue","grey","black", "orchid"), pch=c(8,9,10,12, 13,11), cex=0.7, title="Legenda")
+@
+
+<<dunn_PCA, echo=FALSE, eval=FALSE, warning=FALSE, fig.cap="Wskaüniki wewnÍtrzne: wsk. Dunn'a">>=
+### WSKAèNIK DUNN'A ###
+plot ( c(2:6), c(dunn(distance=as.matrix(mac_pod), cl2.kmeans$cluster),
+dunn(as.matrix(mac_pod), cl3.kmeans$cluster),
+dunn(as.matrix(mac_pod), cl4.kmeans$cluster),
+dunn(as.matrix(mac_pod), cl5.kmeans$cluster),
+dunn(as.matrix(mac_pod), cl6.kmeans$cluster)), main="Wskaünik Dunn'a", ylim=c(0, 1), xlab="Wskaünik Dunn'a", ylab="Liczba klastrÛw", type='b', lwd=2, pch=8, col="hotpink4")
+lines( c(2:6),
+c(dunn(distance=as.matrix(mac_pod), cl2.pam$clustering),
+dunn(as.matrix(mac_pod), cl3.pam$clustering),
+dunn(as.matrix(mac_pod), cl4.pam$clustering),
+dunn(as.matrix(mac_pod), cl5.pam$clustering),
+dunn(as.matrix(mac_pod), cl6.pam$clustering)), type='b', pch=9, lwd=2, col="pink")
+lines( c(2:6), 
+c(dunn(distance=as.matrix(mac_pod), cl2.agnes),
+dunn(as.matrix(mac_pod), cl3.agnes),
+dunn(as.matrix(mac_pod), cl4.agnes),
+dunn(as.matrix(mac_pod), cl5.agnes),
+dunn(as.matrix(mac_pod), cl6.agnes)), type='b', lwd=2, pch=10, col="royalblue")
+lines( c(2:6), 
+c(dunn(distance=as.matrix(mac_pod), cl2.agnesS),
+dunn(as.matrix(mac_pod), cl3.agnesS),
+dunn(as.matrix(mac_pod), cl4.agnesS),
+dunn(as.matrix(mac_pod), cl5.agnesS),
+dunn(as.matrix(mac_pod), cl6.agnesS)), type='b', lwd=2, pch=12, col="grey")
+lines( c(2:6), 
+c(dunn(distance=as.matrix(mac_pod), cl2.agnesC),
+dunn(as.matrix(mac_pod), cl3.agnesC),
+dunn(as.matrix(mac_pod), cl4.agnesC),
+dunn(as.matrix(mac_pod), cl5.agnesC),
+dunn(as.matrix(mac_pod), cl6.agnesC)), type='b', lwd=2, pch=13, col="black")
+lines( c(2:6),
+c(dunn(distance=as.matrix(mac_pod), cl2.diana),
+dunn(as.matrix(mac_pod), cl3.diana),
+dunn(as.matrix(mac_pod), cl4.diana),
+dunn(as.matrix(mac_pod), cl5.diana),
+dunn(as.matrix(mac_pod), cl6.diana)), type='b', lwd=2, pch=11, col="orchid")
+legend("topright", c("kmeans", "pam", "agnes_a", "agnes_s", "agnes_c", "diana"), col=c("hotpink4", "pink", "royalblue", "grey", "black","orchid"), pch=c(8,9,10,12, 13,11), cex=0.7, title="Legenda")
+@
+
+<<zgodnosc_partycji2_PCA, echo=FALSE, eval=FALSE, results='asis'>>=
+
+# porÛwnanie wynikow grupowania z rzeczywistπ przynaleznoscia do klas
+tab.spam.kmeans <- table(kmeans.k2$cluster, spam$spam)
+#matchClasses(tab.spam.kmeans, method="exact")
+
+tab.spam.pam <- table(spam.pam2$clustering, spam$spam)
+#matchClasses(tab.spam.pam, method="exact")
+
+tab.spam.agnes <- table(cl2.agnes, spam$spam)
+tab.spam.agnesS <- table(cl2.agnesS, spam$spam)
+tab.spam.agnesC <- table(cl2.agnesC, spam$spam)
+#matchClasses(tab.spam.agnes, method="exact")
+
+tab.spam.diana <- table(spam.diana.k2, spam$spam)
+#matchClasses(tab.spam.diana, method="exact")
+
+tab.pam.agnes <- table(spam.pam2$clustering, spam.agnes.avg.k2)
+#matchClasses(tab.pam.agnes, method="exact")
+
+w2<-c(tab.spam.pam[1],tab.spam.pam[2],tab.spam.pam[3],tab.spam.pam[4], 100*( tab.spam.kmeans[1]+tab.spam.kmeans[4] )/4601)
+w1<-c(tab.spam.kmeans[1],tab.spam.kmeans[2],tab.spam.kmeans[3],tab.spam.kmeans[4], 100*( tab.spam.pam[1]+tab.spam.pam[4] )/4601)
+w3<-c(tab.spam.agnes[1],tab.spam.agnes[2],tab.spam.agnes[3],tab.spam.agnes[4], 100*( tab.spam.agnes[1]+tab.spam.agnes[4] )/4601)
+w3S<-c(tab.spam.agnesS[1],tab.spam.agnesS[2],tab.spam.agnesS[3],tab.spam.agnesS[4], 100*( tab.spam.agnesS[1]+tab.spam.agnesS[4] )/4601)
+w3C<-c(tab.spam.agnesC[1],tab.spam.agnesC[2],tab.spam.agnesC[3],tab.spam.agnesC[4], 100*( tab.spam.agnesC[1]+tab.spam.agnesC[4] )/4601)
+w4<-c(tab.spam.diana[1],tab.spam.diana[2],tab.spam.diana[3],tab.spam.diana[4], 100*( tab.spam.diana[1]+tab.spam.diana[4] )/4601)
+
+w<-c("k-means", "pam", "agnes_a", "agnes_s","agnes_c","diana")
+k<-c("e-mail_1","e-mail_2", "spam_1","spam_2", "dopasow_proc")
+macierz<-rbind(w1,w2,w3,w3S,w3C,w4)
+dimnames(macierz)=list(w,k)
+tabela<-xtable(macierz, digits=0, row.names=FALSE, caption="Dopasowanie klas", label="tabela:tabela")
+
+# align(tabela)<-"|c|c|c|c|c|c|"
+print(tabela, type="latex", table.placement="H", sanitize.text.function = function(x) {x})
+
+
+@
+
+<<wsk_zew_Rand_jaccard_fawkl_PCA, echo=FALSE, eval=FALSE, fig.cap="Wskaüniki zewnÍtrzne: wsk. Randa">>=
+
+pred2.kmeans <- as.integer(cl2.kmeans$cluster)
+pred3.kmeans <- as.integer(cl3.kmeans$cluster)
+pred4.kmeans <- as.integer(cl4.kmeans$cluster)
+pred5.kmeans <- as.integer(cl5.kmeans$cluster)
+pred6.kmeans <- as.integer(cl6.kmeans$cluster)
+
+pred2.pam <- as.integer(cl2.pam$clustering)
+pred3.pam <- as.integer(cl3.pam$clustering)
+pred4.pam <- as.integer(cl4.pam$clustering)
+pred5.pam <- as.integer(cl5.pam$clustering)
+pred6.pam <- as.integer(cl6.pam$clustering)
+
+pred2.agnes <- as.integer(cl2.agnes)
+pred3.agnes <- as.integer(cl3.agnes)
+pred4.agnes <- as.integer(cl4.agnes)
+pred5.agnes <- as.integer(cl5.agnes)
+pred6.agnes <- as.integer(cl6.agnes)
+
+pred2.agnesS <- as.integer(cl2.agnesS)
+pred3.agnesS <- as.integer(cl3.agnesS)
+pred4.agnesS <- as.integer(cl4.agnesS)
+pred5.agnesS <- as.integer(cl5.agnesS)
+pred6.agnesS <- as.integer(cl6.agnesS)
+
+pred2.agnesC <- as.integer(cl2.agnesC)
+pred3.agnesC <- as.integer(cl3.agnesC)
+pred4.agnesC <- as.integer(cl4.agnesC)
+pred5.agnesC <- as.integer(cl5.agnesC)
+pred6.agnesC <- as.integer(cl6.agnesC)
+
+pred2.diana <- as.integer(cl2.diana)
+pred3.diana <- as.integer(cl3.diana)
+pred4.diana <- as.integer(cl4.diana)
+pred5.diana <- as.integer(cl5.diana)
+pred6.diana <- as.integer(cl6.diana)
+
+
+std2kmeans <- std.ext(pred2.kmeans, as.integer(spam$spam))
+rand2kmeans <- clv.Rand(std2kmeans)
+jaccard2kmeans <- clv.Jaccard(std2kmeans)
+folk.mal2kmeans <- clv.Folkes.Mallows(std2kmeans)
+
+std3kmeans <- std.ext(pred3.kmeans, as.integer(spam$spam))
+rand3kmeans <- clv.Rand(std3kmeans)
+jaccard3kmeans <- clv.Jaccard(std3kmeans)
+folk.mal3kmeans <- clv.Folkes.Mallows(std3kmeans)
+
+std4kmeans <- std.ext(pred4.kmeans, as.integer(spam$spam))
+rand4kmeans <- clv.Rand(std4kmeans)
+jaccard4kmeans <- clv.Jaccard(std4kmeans)
+folk.mal4kmeans <- clv.Folkes.Mallows(std4kmeans)
+
+std5kmeans <- std.ext(pred5.kmeans, as.integer(spam$spam))
+rand5kmeans <- clv.Rand(std5kmeans)
+jaccard5kmeans <- clv.Jaccard(std5kmeans)
+folk.mal5kmeans <- clv.Folkes.Mallows(std5kmeans)
+
+std6kmeans <- std.ext(pred6.kmeans, as.integer(spam$spam))
+rand6kmeans <- clv.Rand(std6kmeans)
+jaccard6kmeans <- clv.Jaccard(std6kmeans)
+folk.mal6kmeans <- clv.Folkes.Mallows(std6kmeans)
+
+###
+
+std2pam <- std.ext(pred2.pam, as.integer(spam$spam))
+rand2pam <- clv.Rand(std2pam)
+jaccard2pam <- clv.Jaccard(std2pam)
+folk.mal2pam <- clv.Folkes.Mallows(std2pam)
+
+std3pam <- std.ext(pred3.pam, as.integer(spam$spam))
+rand3pam <- clv.Rand(std3pam)
+jaccard3pam <- clv.Jaccard(std3pam)
+folk.mal3pam <- clv.Folkes.Mallows(std3pam)
+
+std4pam <- std.ext(pred4.pam, as.integer(spam$spam))
+rand4pam <- clv.Rand(std4pam)
+jaccard4pam <- clv.Jaccard(std4pam)
+folk.mal4pam <- clv.Folkes.Mallows(std4pam)
+
+std5pam <- std.ext(pred5.pam, as.integer(spam$spam))
+rand5pam <- clv.Rand(std5pam)
+jaccard5pam <- clv.Jaccard(std5pam)
+folk.mal5pam <- clv.Folkes.Mallows(std5pam)
+
+std6pam <- std.ext(pred6.pam, as.integer(spam$spam))
+rand6pam <- clv.Rand(std6pam)
+jaccard6pam <- clv.Jaccard(std6pam)
+folk.mal6pam <- clv.Folkes.Mallows(std6pam)
+
+## 
+
+std2agnes <- std.ext(pred2.agnes, as.integer(spam$spam))
+rand2agnes <- clv.Rand(std2agnes)
+jaccard2agnes <- clv.Jaccard(std2agnes)
+folk.mal2agnes <- clv.Folkes.Mallows(std2agnes)
+
+std3agnes <- std.ext(pred3.agnes, as.integer(spam$spam))
+rand3agnes <- clv.Rand(std3agnes)
+jaccard3agnes <- clv.Jaccard(std3agnes)
+folk.mal3agnes <- clv.Folkes.Mallows(std3agnes)
+
+std4agnes <- std.ext(pred4.agnes, as.integer(spam$spam))
+rand4agnes <- clv.Rand(std4agnes)
+jaccard4agnes <- clv.Jaccard(std4agnes)
+folk.mal4agnes <- clv.Folkes.Mallows(std4agnes)
+
+std5agnes <- std.ext(pred5.agnes, as.integer(spam$spam))
+rand5agnes <- clv.Rand(std5agnes)
+jaccard5agnes <- clv.Jaccard(std5agnes)
+folk.mal5agnes <- clv.Folkes.Mallows(std5agnes)
+
+std6agnes <- std.ext(pred6.agnes, as.integer(spam$spam))
+rand6agnes <- clv.Rand(std6agnes)
+jaccard6agnes <- clv.Jaccard(std6agnes)
+folk.mal6agnes <- clv.Folkes.Mallows(std6agnes)
+
+
+std2agnesSS <- std.ext(pred2.agnesS, as.integer(spam$spam))
+rand2agnesS <- clv.Rand(std2agnesS)
+jaccard2agnesS <- clv.Jaccard(std2agnesS)
+folk.mal2agnesS <- clv.Folkes.Mallows(std2agnesS)
+
+std3agnesS <- std.ext(pred3.agnesS, as.integer(spam$spam))
+rand3agnesS <- clv.Rand(std3agnesS)
+jaccard3agnesS <- clv.Jaccard(std3agnesS)
+folk.mal3agnesS <- clv.Folkes.Mallows(std3agnesS)
+
+std4agnesS <- std.ext(pred4.agnesS, as.integer(spam$spam))
+rand4agnesS <- clv.Rand(std4agnesS)
+jaccard4agnesS <- clv.Jaccard(std4agnesS)
+folk.mal4agnesS <- clv.Folkes.Mallows(std4agnesS)
+
+std5agnesS <- std.ext(pred5.agnesS, as.integer(spam$spam))
+rand5agnesS <- clv.Rand(std5agnesS)
+jaccard5agnesS <- clv.Jaccard(std5agnesS)
+folk.mal5agnesS <- clv.Folkes.Mallows(std5agnesS)
+
+std6agnesS <- std.ext(pred6.agnesS, as.integer(spam$spam))
+rand6agnesS <- clv.Rand(std6agnesS)
+jaccard6agnesS <- clv.Jaccard(std6agnesS)
+folk.mal6agnesS <- clv.Folkes.Mallows(std6agnesS)
+
+##
+
+std2agnesC <- std.ext(pred2.agnesC, as.integer(spam$spam))
+rand2agnesC <- clv.Rand(std2agnesC)
+jaccard2agnesC <- clv.Jaccard(std2agnesC)
+folk.mal2agnesC <- clv.Folkes.Mallows(std2agnesC)
+
+std3agnesC <- std.ext(pred3.agnesC, as.integer(spam$spam))
+rand3agnesC <- clv.Rand(std3agnesC)
+jaccard3agnesC <- clv.Jaccard(std3agnesC)
+folk.mal3agnesC <- clv.Folkes.Mallows(std3agnesC)
+
+std4agnesC <- std.ext(pred4.agnesC, as.integer(spam$spam))
+rand4agnesC <- clv.Rand(std4agnesC)
+jaccard4agnesC <- clv.Jaccard(std4agnesC)
+folk.mal4agnesC <- clv.Folkes.Mallows(std4agnesC)
+
+std5agnesC <- std.ext(pred5.agnesC, as.integer(spam$spam))
+rand5agnesC <- clv.Rand(std5agnesC)
+jaccard5agnesC <- clv.Jaccard(std5agnesC)
+folk.mal5agnesC <- clv.Folkes.Mallows(std5agnesC)
+
+std6agnesC <- std.ext(pred6.agnesC, as.integer(spam$spam))
+rand6agnesC <- clv.Rand(std6agnesC)
+jaccard6agnesC <- clv.Jaccard(std6agnesC)
+folk.mal6agnesC <- clv.Folkes.Mallows(std6agnesC)
+
+###
+
+std2diana <- std.ext(pred2.diana, as.integer(spam$spam))
+rand2diana <- clv.Rand(std2diana)
+jaccard2diana <- clv.Jaccard(std2diana)
+folk.mal2diana <- clv.Folkes.Mallows(std2diana)
+
+std3diana <- std.ext(pred3.diana, as.integer(spam$spam))
+rand3diana <- clv.Rand(std3diana)
+jaccard3diana <- clv.Jaccard(std3diana)
+folk.mal3diana <- clv.Folkes.Mallows(std3diana)
+
+std4diana <- std.ext(pred4.diana, as.integer(spam$spam))
+rand4diana <- clv.Rand(std4diana)
+jaccard4diana <- clv.Jaccard(std4diana)
+folk.mal4diana <- clv.Folkes.Mallows(std4diana)
+
+std5diana <- std.ext(pred5.diana, as.integer(spam$spam))
+rand5diana <- clv.Rand(std5diana)
+jaccard5diana <- clv.Jaccard(std5diana)
+folk.mal5diana <- clv.Folkes.Mallows(std5diana)
+
+std6diana <- std.ext(pred6.diana, as.integer(spam$spam))
+rand6diana <- clv.Rand(std6diana)
+jaccard6diana <- clv.Jaccard(std6diana)
+folk.mal6diana <- clv.Folkes.Mallows(std6diana)
+
+plot(c(2:6), c(rand2kmeans, rand3kmeans, rand4kmeans, rand5kmeans, rand6kmeans), type='b', lwd=2, col="hotpink4", main="Rand", pch=8, ylim=c(0.5, 0.6), xlab="Liczba klastrÛw", ylab="Rand")
+lines(c(2:6), c(rand2pam, rand3pam, rand4pam, rand5pam, rand6pam), type='b', lwd=2, col="pink", pch=9)
+lines(c(2:6), c(rand2agnes, rand3agnes, rand4agnes, rand5agnes, rand6agnes), type='b', lwd=2, col="royalblue", pch=10)
+lines(c(2:6), c(rand2agnesS, rand3agnesS, rand4agnesS, rand5agnesS, rand6agnesS), type='b', lwd=2, col="grey", pch=12)
+lines(c(2:6), c(rand2agnesC, rand3agnesC, rand4agnesC, rand5agnesC, rand6agnesC), type='b', lwd=2, col="black", pch=13)
+lines(c(2:6), c(rand2diana, rand3diana, rand4diana, rand5diana, rand6diana), type='b', lwd=2, col="orchid", pch=11)
+legend("topleft", c("kmeans", "pam", "agnes", "diana"), col=c("hotpink4", "pink", "royalblue", "orchid"), pch=c(8,9,10,12, 13,11), cex=0.7, title="Legenda")
+
+@
+
+<<wsk_zew_cd_PCA, echo=FALSE, eval=FALSE, fig.width=8, fig.height=4.5, fig.cap="Wskaüniki zewnÍtrzne: Jaccarda i Fowlkesa-Mallowsa">>=
+par(mfrow=c(1,2))
+plot(c(2:6), c(jaccard2kmeans, jaccard3kmeans, jaccard4kmeans, jaccard5kmeans, jaccard6kmeans), type='b', lwd=2, col="hotpink4", main="Jaccard", pch=8, ylim=c(0.3, 0.55), xlab="Liczba klastrÛw", ylab="Jaccard")
+lines(c(2:6), c(jaccard2pam, jaccard3pam, jaccard4pam, jaccard5pam, jaccard6pam), type='b', lwd=2, col="pink", pch=9)
+lines(c(2:6), c(jaccard2agnes, jaccard3agnes, jaccard4agnes, jaccard5agnes, jaccard6agnes), type='b', lwd=2, col="royalblue", pch=10)
+lines(c(2:6), c(jaccard2agnesS, jaccard3agnesS, jaccard4agnesS, jaccard5agnesS, jaccard6agnesS), type='b', lwd=2, col="grey", pch=12)
+lines(c(2:6), c(jaccard2agnesC, jaccard3agnesC, jaccard4agnesC, jaccard5agnesC, jaccard6agnesC), type='b', lwd=2, col="black", pch=13)
+lines(c(2:6), c(jaccard2diana, jaccard3diana, jaccard4diana, jaccard5diana, jaccard6diana), type='b', lwd=2, col="orchid", pch=11)
+legend("bottomleft", c("kmeans", "pam", "agnes", "diana"), col=c("hotpink4", "pink", "royalblue", "orchid"), pch=c(8,9,10,12,13,11), cex=0.7, title="Legenda")
+
+plot(c(2:6), c(folk.mal2kmeans, folk.mal3kmeans, folk.mal4kmeans, folk.mal5kmeans, folk.mal6kmeans), type='b', lwd=2, col="hotpink4", main="folk.mal", pch=8, ylim=c(0.45, 0.75), xlab="Liczba klastrÛw", ylab="Fowlkes-Mallows")
+lines(c(2:6), c(folk.mal2pam, folk.mal3pam, folk.mal4pam, folk.mal5pam, folk.mal6pam), type='b', lwd=2, col="pink", pch=9)
+lines(c(2:6), c(folk.mal2agnes, folk.mal3agnes, folk.mal4agnes, folk.mal5agnes, folk.mal6agnes), type='b', lwd=2, col="royalblue", pch=10)
+lines(c(2:6), c(folk.mal2agnesS, folk.mal3agnesS, folk.mal4agnesS, folk.mal5agnesS, folk.mal6agnesS), type='b', lwd=2, col="grey", pch=12)
+lines(c(2:6), c(folk.mal2agnesC, folk.mal3agnesC, folk.mal4agnesC, folk.mal5agnesC, folk.mal6agnesC), type='b', lwd=2, col="black", pch=13)
+lines(c(2:6), c(folk.mal2diana, folk.mal3diana, folk.mal4diana, folk.mal5diana, folk.mal6diana), type='b', lwd=2, col="orchid", pch=11)
+legend("bottomleft", c("kmeans", "pam", "agnes", "diana"), col=c("hotpink4", "pink", "royalblue", "orchid"), pch=c(8,9,10,12,13,11), cex=0.7, title="Legenda")
+par(mfrow=c(1,1))
+
+@
+
+\section{Podsumowanie}
+Podsumowujπc, spoúrÛd przeanalizowaniu licznych metod klasyfikacji, najlepszπ okaza≥a siÍ byÊ
+XGBoost. Jednak wyniki uzyskane za pomocπ pozosta≥ych rozwaøanych
+metod (poza Klasyfikatorem Naiwnym Bayesa), nie sπ istotnie gorsze. W szczegÛlnoúci bardzo 
+dobrπ skutecznoúÊ uzyska≥y metody Regresji Logistycznej i LDA, charakteryzujπce siÍ znacznie mniejszπ 
+z≥oøonoúciπ obliczeniowπ i interpretowalnoúciπ.
+Jeúli chodzi o analizÍ skupieÒ, rozwaøone metody nie niosπ za sobπ jednoznacznej informacji o strukturze
+wewnÍtrznej danych. RÛønorodnoúÊ wynikÛw wywo≥uje wπtpliwoúci. Podzia≥ wynikajπcy z zastosowania powyøszych metod
+moøe nie byÊ toøsamy z podzia≥em na grupy "mail" i "spam" i moøe on reprezentowaÊ inne niezane partycje, za ktÛrymi stojπ 
+informacje dotyczπce pewnej grupy maili, ktÛrych odtworzenie moøe byÊ niemoøliwe ze wzglÍdu na strukturÍ danych 
+(nie mamy pe≥nych maili, tylko czÍstotliwoúÊ s≥Ûw).
+
+
+\end{document}
